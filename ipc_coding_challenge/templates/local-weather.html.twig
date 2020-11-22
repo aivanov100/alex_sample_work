@@ -1,0 +1,26 @@
+{#
+/**
+ * @file
+ * Theme implementation for Local Weather page.
+ *
+ * Available variables
+ * - target_city: The city for which the weather is displayed.
+ * - headline: Weather conditions headline.
+ * - description: Weather conditions description.
+ * - temp: Temperature.
+ * - feels_like: "Feels like" temperature.
+ * - humidity: Humidity, as percentage.
+ *
+ */
+#}
+{{ attach_library('ipc_coding_challenge/local_weather') }}
+
+<h1>Current weather in {{ target_city }}</h1>
+
+<div id="weather-conditions">
+  <h2>{{ headline }}</h2>
+  <h3>{{ description }}</h3>
+  <p>Temperature: {{ temp }} F</p>
+  <p>Feels like: {{ feels_like }} F</p>
+  <p>Humidity: {{ humidity }} %</p>
+</div>

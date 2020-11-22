@@ -1,0 +1,6 @@
+name: IPC Coding Challenge
+type: module
+description: 'IPC Coding Challenge - Display Local Weather.'
+package: Custom
+core: 8.x
+core_version_requirement: ^8 || ^9

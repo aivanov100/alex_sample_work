@@ -1,0 +1,24 @@
+<?php
+
+/**
+ * @file
+ * Contains hook implementations for IPC Coding Challenge module.
+ */
+
+/**
+ * Implements hook_theme().
+ */
+function ipc_coding_challenge_theme($existing, $type, $theme, $path) {
+  return [
+    'local_weather' => [
+      'variables' => [
+        'target_city' => NULL,
+        'headline' => NULL,
+        'description' => NULL,
+        'temp' => NULL,
+        'feels_like' => NULL,
+        'humidity' => NULL,
+      ],
+    ],
+  ];
+}

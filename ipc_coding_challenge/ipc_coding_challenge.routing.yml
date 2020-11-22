@@ -1,0 +1,6 @@
+ipc_coding_challenge.display_local_weather:
+  path: '/display-local-weather'
+  defaults:
+    _controller: '\Drupal\ipc_coding_challenge\Controller\LocalWeatherController::displayLocalWeather'
+  requirements:
+    _permission: 'access content'
