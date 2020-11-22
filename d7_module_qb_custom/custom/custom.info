@@ -1,0 +1,9 @@
+name = Custom
+description = Custom QuickBooks Integration
+core = 7.x
+dependencies[] = feeds
+dependencies[] = feeds_xls
+dependencies[] = ji_quickbooks
+dependencies[] = mailhandler
+dependencies[] = views
+version = 7.x-1.0

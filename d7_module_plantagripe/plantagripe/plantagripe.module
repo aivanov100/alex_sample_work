@@ -1,0 +1,147 @@
+<?php
+
+/**
+ * @file
+ * Enables multi-step form wizard to create/edit entities of type: gripevine.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function plantagripe_menu() {
+  $items = array();
+
+  $items['plantgripe'] = array(
+    'title' => 'Plant Your Gripe',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('plantagripe_create_gripe_wizard'),
+    'access callback' => TRUE,
+    'description' => 'A multistep form for entering gripes.',
+    'file' => 'plantagripe.form.inc',
+  );
+
+  $items['plantgripe/%biz_nid'] = array(
+    'title' => 'Plant Your Gripe',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('plantagripe_create_gripe_wizard', 1),
+    'access callback' => TRUE,
+    'file' => 'plantagripe.form.inc',
+  );
+
+  $items['node/%node/edit-gripe'] = array(
+    'title' => 'Edit',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('plantagripe_edit_gripe_wizard', 1),
+    'access callback' => 'plantagripe_access_check',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'plantagripe.edit.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Access callback function for 'Edit Gripe' page.
+ */
+function plantagripe_access_check($node) {
+  if ($node->type == 'gripevine') {
+    global $user;
+    if (in_array('authenticated user', $user->roles) && $node->uid == $user->uid) {
+      return TRUE;
+    }
+    elseif (in_array('dev-admin', $user->roles)) {
+      return TRUE;
+    }
+    elseif (in_array('moderator', $user->roles)) {
+      return TRUE;
+    }
+    else {
+      return FALSE;
+    }
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function plantagripe_theme() {
+  $items = array();
+
+  $items['step1'] = array(
+    'template' => '/templates/step1',
+    'arguments' => array(),
+  );
+  $items['step2'] = array(
+    'template' => '/templates/step2',
+    'arguments' => array(),
+  );
+  $items['step2_info_container'] = array(
+    'template' => '/templates/step2_info_container',
+    'variables' => array(),
+  );
+  $items['step2_listing_info'] = array(
+    'template' => '/templates/step2_listing_info',
+    'variables' => array(),
+  );
+  $items['step2_search_listings'] = array(
+    'template' => '/templates/step2_search_listings',
+    'variables' => array(),
+  );
+  $items['step3'] = array(
+    'template' => '/templates/step3',
+    'arguments' => array(),
+  );
+  $items['moderator_edit_gripe_tab'] = array(
+    'arguments' => array(),
+  );
+
+  return $items;
+}
+
+/**
+ * Theme template preprocess function for: step1.tpl.php.
+ */
+function template_preprocess_step1(&$variables) {
+  $variables['form'] = reset($variables);
+}
+
+/**
+ * Theme template preprocess function for: step2.tpl.php.
+ */
+function template_preprocess_step2(&$variables) {
+  $variables['form'] = reset($variables);
+}
+
+/**
+ * Theme template preprocess function for: step3.tpl.php.
+ */
+function template_preprocess_step3(&$variables) {
+  $variables['form'] = reset($variables);
+}
+
+/**
+ * Theme template preprocess function for: step2_info_container.tpl.php.
+ */
+function template_preprocess_step2_info_container(&$variables) {
+  if (!$variables['show']) {
+    $variables['style_display'] = 'style="display:none"';
+  }
+  else {
+    $variables['style_display'] = '';
+  }
+}
+
+/**
+ * Implements hook_menu_local_tasks_alter().
+ */
+function plantagripe_menu_local_tasks_alter(&$data, $router_item, $root_path) {
+  global $user;
+  if (in_array('moderator', $user->roles)) {
+    for ($i = 0; $i < count($data['tabs'][0]['output']); $i++) {
+      if ($data['tabs'][0]['output'][$i]['#link']['path'] == 'node/%/edit-gripe') {
+        $data['tabs'][0]['output'][$i]['#theme'] = 'moderator_edit_gripe_tab';
+      }
+    }
+  }
+}

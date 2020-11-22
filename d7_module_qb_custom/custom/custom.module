@@ -1,0 +1,371 @@
+<?php
+
+/**
+ * @file
+ * Enables functionality for import of transactions into Quickbooks via XLS file upload.
+ */
+
+/**
+ * Implements hook_cron().
+ *
+ * Scan saved nodes for any summary email nodes created today, trigger XLS Feeds
+ * import if new summary email node is found to process the attached file.
+ */
+function custom_cron() {
+  $my_view_name = 'summary_emails';
+  $my_display_name = 'page';
+  $my_view = views_get_view($my_view_name);
+  if (is_object($my_view)) {
+    $my_view->set_display($my_display_name);
+    $my_view->set_items_per_page(0);
+    $my_view->execute();
+    $response = $my_view->result;
+
+    foreach ($response as $entry) {
+      $loaded_node = entity_load('node', array($entry->nid));
+      $loaded_node = reset($loaded_node);
+      $wrapper = entity_metadata_wrapper('node', $loaded_node);
+
+      $field_attachment = $wrapper->field_attachment->value();
+      $filename = $field_attachment['filename'];
+      $file_uri = $field_attachment['uri'];
+
+      $v1 = strpos($filename, "2018");
+      $v2 = strpos($filename, ".xls");
+      if($v1 !== false && $v2 !== false) {
+        $file_url = file_create_url($file_uri);
+        $importer_id = 'xls_import_http';
+
+        $source = feeds_source($importer_id);
+        $fetcher_config = $source->getConfigFor($source->importer->fetcher);
+        $fetcher_config['source'] = $file_url;
+        $source->setConfigFor($source->importer->fetcher, $fetcher_config);
+        $source->save();
+        while (FEEDS_BATCH_COMPLETE != $source->import());
+
+        drupal_set_message(t('Custom cron import triggered'), 'status');
+
+        $wrapper->field_imported = 1;
+        $wrapper->save();
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_feeds_after_import().
+ */
+function custom_feeds_after_import(FeedsSource $source) {
+  if ($source->id == 'xls_import') {
+    $file_path = $source->config['FeedsFileFetcher']['source'];
+    $v1 = strpos($file_path, "2018");
+    $date_filter_value = substr($file_path, $v1, 10);
+    _custom_query_atm_transactions($date_filter_value);
+  }
+  if ($source->id == 'xls_import_http') {
+    $file_path = $source->config['FeedsHTTPFetcher']['source'];
+    $v1 = strpos($file_path, "2018");
+    $date_filter_value = substr($file_path, $v1, 10);
+    _custom_query_atm_transactions($date_filter_value);
+  }
+}
+
+/**
+ * Analyze and process all transaction-data nodes created by XLS import.
+ *
+ * @param string $date_filter_value
+ *   Date string for view exposed filter.
+ */
+function _custom_query_atm_transactions($date_filter_value) {
+  $custom_atm_account_search_strings = variable_get('custom_atm_account_search_strings');
+  $atm_names = array_keys($custom_atm_account_search_strings);
+
+  foreach ($atm_names as $atm_name) {
+    $my_view_name = 'excel_transactions';
+    $my_display_name = 'page';
+    $filter1_name = 'field_transaction_time_value';
+    $filter2_name = 'field_atm_name_value';
+    $filter2_value = $atm_name;
+    $exposed_filters = array($filter1_name => $date_filter_value, $filter2_name => $filter2_value);
+
+    $my_view = views_get_view($my_view_name);
+    if (is_object($my_view)) {
+      $my_view->set_display($my_display_name);
+      $my_view->set_items_per_page(0);
+      $my_view->set_exposed_input($exposed_filters);
+      $my_view->execute();
+      $response = $my_view->result;
+
+      $btc_bought_atm_total = 0;
+      $btc_sold_atm_total = 0;
+      $ltc_bought_atm_total = 0;
+      $ltc_sold_atm_total = 0;
+      $subtransactions = array();
+
+      foreach ($response as $entry) {
+        $loaded_node = entity_load('node', array($entry->nid));
+        $loaded_node = reset($loaded_node);
+        $wrapper = entity_metadata_wrapper('node', $loaded_node);
+
+        $transaction_type = $wrapper->field_transaction_type->value();
+        $inventory_type = $wrapper->field_inventory_type->value();
+        $quantity = $wrapper->field_quantity->value();
+
+        $transaction = new stdClass();
+        $transaction->atm_name = $atm_name;
+        $transaction->transaction_date = $date_filter_value;
+        $transaction->transaction_type = $transaction_type;
+        $transaction->inventory_type = $inventory_type;
+        $transaction->quantity = $quantity;
+        $transaction->cash_amount = $wrapper->field_cash_amount->value();
+
+        $subtransactions[] = $transaction;
+
+        if ($transaction_type == "sale" && $inventory_type == "Bitcoin") {
+          $btc_sold_atm_total = $btc_sold_atm_total + $quantity;
+        }
+        if ($transaction_type == "sale" && $inventory_type == "Litecoin") {
+          $ltc_sold_atm_total = $ltc_sold_atm_total + $quantity;
+        }
+        if ($transaction_type == "withdrawal" && $inventory_type == "Bitcoin") {
+          $btc_bought_atm_total = $btc_bought_atm_total + $quantity;
+        }
+        if ($transaction_type == "withdrawal" && $inventory_type == "Litecoin") {
+          $ltc_bought_atm_total = $ltc_bought_atm_total + $quantity;
+        }
+      }
+
+      $transaction1 = new stdClass();
+      $transaction2 = new stdClass();
+      if ($btc_sold_atm_total > 0 || $ltc_sold_atm_total > 0) {
+        $transaction1->atm_name = $atm_name;
+        $transaction1->transaction_date = $date_filter_value;
+        $transaction1->transaction_type = "Coin Sale";
+        $transaction1->subtransactions = $subtransactions;
+        _custom_process_summary_transaction($transaction1);
+      }
+      if ($btc_bought_atm_total > 0 || $ltc_bought_atm_total > 0) {
+        $transaction2->atm_name = $atm_name;
+        $transaction2->transaction_date = $date_filter_value;
+        $transaction2->transaction_type = "Cash Withdrawal";
+        $transaction2->subtransactions = $subtransactions;
+        _custom_process_summary_transaction($transaction2);
+      }
+
+    }
+  }
+}
+
+/**
+ * Process transaction, call specific subroutines depending on whether it is of
+ * type "Coin Sale" or "Cash Withdrawal".
+ *
+ * @param obj $transaction
+ *   Contains atm_name, transaction_date, transaction_type, sub-transactions data for a transaction.
+ */
+function _custom_process_summary_transaction($transaction) {
+  $quickbooks_mappings = _custom_get_qb_mappings($transaction);
+  if ($transaction->transaction_type == "Coin Sale") {
+    _custom_process_summary_transaction_coin_sale($transaction,$quickbooks_mappings);
+  }
+  if ($transaction->transaction_type == "Cash Withdrawal") {
+    _custom_process_summary_transaction_cash_withdrawal($transaction,$quickbooks_mappings);
+  }
+}
+
+/**
+ * Get Quickbooks attributes for the ATM used in this transaction.
+ *
+ * @param obj $transaction
+ *   Contains atm_name, transaction_date, transaction_type, sub-transactions data for a transaction.
+ *
+ * @return array $quickbooks_mappings
+ *   Contains Quickbooks attributes for the ATM used in this transaction.
+ */
+function _custom_get_qb_mappings($transaction) {
+  $custom_atm_customer_search_strings = variable_get('custom_atm_customer_search_strings');
+  $atm_customer_search_string = $custom_atm_customer_search_strings[$transaction->atm_name];
+  $custom_atm_account_search_strings = variable_get('custom_atm_account_search_strings');
+  $atm_account_search_string = $custom_atm_account_search_strings[$transaction->atm_name];
+
+  $quickbooks_mappings = array();
+  $quickbooks_service = new JIQuickBooksService();
+
+  $products = $quickbooks_service->getAllProducts();
+  foreach ($products as $product) {
+    if ($product->Name == "Litecoin (LTC)") {
+      $quickbooks_mappings['ltc_product_id'] = $product->Id;
+    }
+    if ($product->Name == "Millibits (Bitcoin)") {
+      $quickbooks_mappings['btc_product_id'] = $product->Id;
+    }
+  }
+
+  $payment_methods = $quickbooks_service->getAllPaymentMethods();
+  foreach ($payment_methods as $payment_method) {
+    if ($payment_method->Name == "Cash") {
+      $quickbooks_mappings['payment_method_cash'] = $payment_method->Id;
+    }
+  }
+
+  $customers = $quickbooks_service->getAllCustomers();
+  foreach ($customers as $customer) {
+    if (strpos($customer->FullyQualifiedName, $atm_customer_search_string) !== false) {
+      $quickbooks_mappings['customer_id'] = $customer->Id;
+    }
+  }
+
+  $accounts = $quickbooks_service->getAllAcounts();
+  foreach ($accounts as $account) {
+    if (strpos($account->Name,$atm_account_search_string . " ATM Acceptor") !== false) {
+      $quickbooks_mappings['acceptor_account_id'] = $account->Id;
+    }
+    if (strpos($account->Name,$atm_account_search_string . " ATM Dispenser") !== false) {
+      $quickbooks_mappings['dispenser_account_id'] = $account->Id;
+    }
+  }
+
+  return $quickbooks_mappings;
+}
+
+/**
+ * Process specific transaction of type "Coin Sale".
+ *
+ * @param obj $transaction
+ *   Contains atm_name, transaction_date, transaction_type, sub-transactions data for a transaction.
+ *
+ * @param array $quickbooks_mappings
+ *   Contains Quickbooks attributes for the ATM used in this transaction.
+ */
+function _custom_process_summary_transaction_coin_sale($transaction, $quickbooks_mappings) {
+  $quickbooks_service = new JIQuickBooksService();
+
+  $btc_product_id = $quickbooks_mappings['btc_product_id'];
+  $ltc_product_id = $quickbooks_mappings['ltc_product_id'];
+  $tx_payment_method_id = $quickbooks_mappings['payment_method_cash'];
+  $customer_id = $quickbooks_mappings['customer_id'];
+  $acceptor_account_id = $quickbooks_mappings['acceptor_account_id'];
+
+  $receipt = new IPPSalesReceipt();
+  $receipt->TxnDate = $transaction->transaction_date;
+  $receipt->CustomerRef = $customer_id;
+  $receipt->DepositToAccountRef = $acceptor_account_id;
+  $privateNote = "ATM Name: " . $transaction->atm_name .
+    ".  " . "Transaction Date: " . $transaction->transaction_date;
+  $receipt->PrivateNote = $privateNote;
+  $receipt->PaymentMethodRef = $tx_payment_method_id;
+
+  $receipt->Line = array();
+  $subtransactions = $transaction->subtransactions;
+
+  foreach ($subtransactions as $subtransaction) {
+    if ($subtransaction->transaction_type == "sale") {
+      $receipt_line = new IPPLine();
+      $receipt_line->Amount = $subtransaction->cash_amount;
+      $receipt_line->DetailType = 'SalesItemLineDetail';
+      $receipt_line->SalesItemLineDetail = new IPPSalesItemLineDetail();
+      if ($subtransaction->inventory_type == "Bitcoin") {
+        $receipt_line->SalesItemLineDetail->ItemRef = $btc_product_id;
+      } else if ($subtransaction->inventory_type == "Litecoin") {
+        $receipt_line->SalesItemLineDetail->ItemRef = $ltc_product_id;
+      }
+      $receipt_line->SalesItemLineDetail->Qty = 1000 * $subtransaction->quantity;
+      $calculated_rate = $receipt_line->Amount / $receipt_line->SalesItemLineDetail->Qty;
+      $receipt_line->SalesItemLineDetail->UnitPrice = $calculated_rate;
+      $receipt->Line[] = $receipt_line;
+    }
+  }
+
+  try {
+    $response = array();
+    $response['response'] = $quickbooks_service->dataService->Add($receipt);
+    $response['error'] = $quickbooks_service->checkErrors();
+  }
+  catch (Exception $e) {
+    drupal_set_message($e->getMessage(), 'error');
+    watchdog('Custom', $e->getMessage(), NULL, WATCHDOG_ERROR);
+  }
+}
+
+/**
+ * Process specific transaction of type "Cash Withdrawal".
+ *
+ * @param obj $transaction
+ *   Contains atm_name, transaction_date, transaction_type, sub-transactions data for a transaction.
+ *
+ * @param array $quickbooks_mappings
+ *   Contains Quickbooks attributes for the ATM used in this transaction.
+ */
+function _custom_process_summary_transaction_cash_withdrawal($transaction, $quickbooks_mappings) {
+  $quickbooks_service = new JIQuickBooksService();
+
+  $btc_product_id = $quickbooks_mappings['btc_product_id'];
+  $ltc_product_id = $quickbooks_mappings['ltc_product_id'];
+  $tx_payment_method_id = $quickbooks_mappings['payment_method_cash'];
+  $customer_id = $quickbooks_mappings['customer_id'];
+  $purchase_account_ref_id = $quickbooks_mappings['dispenser_account_id'];
+
+  $purchase = new IPPPurchase();
+  $purchase->TxnDate = $transaction->transaction_date;
+  $purchase->PaymentType = "Cash";
+  $purchase->PaymentMethodRef = $tx_payment_method_id;
+  $purchase->EntityRef = $customer_id;
+  $purchase->AccountRef = $purchase_account_ref_id;
+  $privateNote = "ATM Name: " . $transaction->atm_name .
+    ".  " . "Transaction Date: " . $transaction->transaction_date;
+  $purchase->PrivateNote = $privateNote;
+
+  $purchase->Line = array();
+  $subtransactions = $transaction->subtransactions;
+
+  foreach ($subtransactions as $subtransaction) {
+    if ($subtransaction->transaction_type == "withdrawal") {
+      $line1 = new IPPLine();
+      $line1->Amount = $subtransaction->cash_amount;
+      $line1->DetailType = "ItemBasedExpenseLineDetail";
+      $itemBasedExpenseLineDetail = new IPPItemBasedExpenseLineDetail();
+      if ($subtransaction->inventory_type == "Bitcoin") {
+        $itemBasedExpenseLineDetail->ItemRef = $btc_product_id;
+      } else if ($subtransaction->inventory_type == "Litecoin") {
+        $itemBasedExpenseLineDetail->ItemRef = $ltc_product_id;
+      }
+      $itemBasedExpenseLineDetail->Qty = 1000 * $subtransaction->quantity;
+      $calculated_rate = $line1->Amount / $itemBasedExpenseLineDetail->Qty;
+      $itemBasedExpenseLineDetail->UnitPrice = $calculated_rate;
+      $line1->ItemBasedExpenseLineDetail = $itemBasedExpenseLineDetail;
+      $purchase->Line[] = $line1;
+    }
+  }
+
+  try {
+    $response = array();
+    $response['response'] = $quickbooks_service->dataService->Add($purchase);
+    $response['error'] = $quickbooks_service->checkErrors();
+  }
+  catch (Exception $e) {
+    drupal_set_message($e->getMessage(), 'error');
+    watchdog('Custom', $e->getMessage(), NULL, WATCHDOG_ERROR);
+  }
+}
+
+/**
+ * Implements hook_node_presave().
+ */
+function custom_node_presave($node) {
+  if ($node->type == "transaction_email") {
+    $subject = $node->title;
+    $json_str = $node->body[LANGUAGE_NONE][0]['value'];
+    $transaction = json_decode($json_str);
+    $v1 = strpos($subject, "[Customer ");
+    $v2 = strpos($subject, ") Complete");
+    if ($v1 && $v2 && $v2 > $v1 && substr($json_str, 0, 12) == '{"atm_name":') {
+      $node->field_actual_transaction[LANGUAGE_NONE][0]['value'] = 1;
+      $node->field_atm_name[LANGUAGE_NONE][0]['value'] = $transaction->atm_name;
+      $node->field_transaction_time[LANGUAGE_NONE][0]['value'] = $transaction->transaction_time;
+      $node->field_transaction_type[LANGUAGE_NONE][0]['value'] = $transaction->transaction_type;
+      $node->field_inventory_type[LANGUAGE_NONE][0]['value'] = $transaction->coin_type;
+      $node->field_quantity[LANGUAGE_NONE][0]['value'] = $transaction->bitcoin_amount;
+      $node->field_cash_amount[LANGUAGE_NONE][0]['value'] = $transaction->cash_amount;
+    }
+  }
+}

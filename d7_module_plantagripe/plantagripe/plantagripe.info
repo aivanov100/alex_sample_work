@@ -1,0 +1,5 @@
+name = Plant A Gripe
+description = Generates the Plant A Gripe form
+core = 7.x
+package = Gripevine
+version = 7.x-1.0

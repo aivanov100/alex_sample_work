@@ -1,0 +1,178 @@
+.form-button-disabled {
+  opacity: 0.5;
+}
+
+.form-button-current-step {
+  opacity: 1;
+  outline: #0000ff solid 2px;
+}
+
+/* --- Edit a Gripe --- */
+
+#form-edit-gripe-wizard input[type="text"],
+#gripevine-node-form input[type="password"] {
+  width: 302px;
+  border: #c4c4c4 1px solid;
+  border-radius: 5px;
+  font-size: 1.2em;
+  padding-left: 10px;
+  margin-right: 7px;
+  font-weight: 300;
+  font-style: italic;
+  font-family: 'Open Sans';
+  background: #e3e3e3;
+  padding: 9px 10px 11px;
+  -webkit-box-shadow: inset 1px 1px 5px 0px rgba(0, 0, 0, .1);
+  box-shadow: inset 1px 1px 5px 0px rgba(0, 0, 0, .1);
+}
+
+#form-edit-gripe-wizard textarea {
+  border: #c4c4c4 1px solid;
+  border-radius: 5px;
+  font-size: 1.2em;
+  padding: 9px 10px;
+  width: 680px;
+  resize: none;
+  font-family: 'Open Sans';
+  font-style: italic;
+  max-width: none;
+  height: 140px;
+  background: #e3e3e3;
+  -webkit-box-shadow: inset 1px 1px 5px 0px rgba(0, 0, 0, .1);
+  box-shadow: inset 1px 1px 5px 0px rgba(0, 0, 0, .1);
+  margin: 0 9px 0 0;
+}
+
+#form-edit-gripe-wizard #edit-gripe-title {
+  width: 658px !important;
+  margin: 0 9px 0 0;
+}
+
+#form-edit-gripe-wizard .form-buttons {
+  border-top: #aaa 1px dashed;
+  padding: 10px 0;
+}
+
+#form-edit-gripe-wizard input[type=submit],
+.btn_green {
+  padding: 7px 20px;
+  cursor: pointer;
+  background: #7acc6b; /* Old browsers */
+  background: -moz-linear-gradient(top, #7acc6b 0%, #509846 5%, #36892b 100%); /* FF3.6+ */
+  background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,#7acc6b), color-stop(5%,#509846), color-stop(100%,#36892b)); /* Chrome,Safari4+ */
+  background: -webkit-linear-gradient(top, #7acc6b 0%,#509846 5%,#36892b 100%); /* Chrome10+,Safari5.1+ */
+  background: -o-linear-gradient(top, #7acc6b 0%,#509846 5%,#36892b 100%); /* Opera 11.10+ */
+  background: -ms-linear-gradient(top, #7acc6b 0%,#509846 5%,#36892b 100%); /* IE10+ */
+  background: linear-gradient(to bottom, #7acc6b 0%,#509846 5%,#36892b 100%); /* W3C */
+  color: white;
+  display: inline-block;
+  font-size: 1.5em;
+  border-radius: 4px;
+  -moz-border-radius: 4px;
+  -webkit-border-radius: 4px;
+  border: 1px solid #0d3e07;
+  font-family: 'Open Sans';
+  font-weight: 300;
+  float: right;
+}
+
+#form-edit-gripe-wizard input[type=submit]:hover,
+.btn_green:hover {
+  background: #b2d44c; /* Old browsers */
+  background: #71d95f; /* Old browsers */
+  background: -moz-linear-gradient(top, #71d95f 0%, #42a935 5%, #2e9420 100%); /* FF3.6+ */
+  background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,#71d95f), color-stop(5%,#42a935), color-stop(100%,#2e9420)); /* Chrome,Safari4+ */
+  background: -webkit-linear-gradient(top, #71d95f 0%,#42a935 5%,#2e9420 100%); /* Chrome10+,Safari5.1+ */
+  background: -o-linear-gradient(top, #71d95f 0%,#42a935 5%,#2e9420 100%); /* Opera 11.10+ */
+  background: -ms-linear-gradient(top, #71d95f 0%,#42a935 5%,#2e9420 100%); /* IE10+ */
+  background: linear-gradient(to bottom, #71d95f 0%,#42a935 5%,#2e9420 100%); /* W3C */
+}
+
+#form-edit-gripe-wizard input[type=submit] {
+  float: none;
+  text-transform: uppercase;
+}
+
+#form-edit-gripe-wizard label {
+  font-size: 1.2em;
+  font-weight: 400;
+  margin: 0 0 8px;
+}
+
+#form-edit-gripe-wizard .form-item {
+  margin-top: 15px;
+}
+
+#form-edit-gripe-wizard .resizable-textarea .grippie {
+  display: none;
+}
+
+#form-edit-gripe-wizard .col-one {
+  float: left;
+  width: 74%;
+  margin-right: 10px;
+}
+#form-edit-gripe-wizard .col-two {
+  float: left;
+  margin-top: 33px;
+}
+
+#form-edit-gripe-wizard .col-lower {
+  clear: both;
+  border-top: 1px solid #ececec;
+  padding-top: 20px;
+}
+
+#form-edit-gripe-wizard .col-lower h2 {
+  font-size: 1.3em;
+  font-weight: 400;
+  margin-bottom: 1px;
+}
+
+#form-edit-gripe-wizard .col-lower h3 {
+  font-size: 1em;
+  font-weight: 400;
+}
+
+#form-edit-gripe-wizard .form-item-account-number,
+#form-edit-gripe-wizard .form-item-reference-number,
+#form-edit-gripe-wizard .form-item-private-info {
+  float: left;
+}
+
+#form-edit-gripe-wizard .form-item-account-number input,
+#form-edit-gripe-wizard .form-item-reference-number input {
+  width: 299px;
+}
+
+#form-edit-gripe-wizard  #edit-private-info {
+  margin-right: 9px;
+}
+
+#form-edit-gripe-wizard .form-item-reference-number {
+  margin-left: 15px;
+}
+
+.form-item-biz-search-name,
+.form-item-biz-search-address,
+.form-item-biz-search-city,
+.form-item-biz-search-state,
+.form-item-biz-search-country,
+#form-edit-gripe-wizard .form-item-biz-search-state,
+#form-edit-gripe-wizard .form-item-biz-search-country {
+  margin-right: 10px;
+}
+
+#form-edit-gripe-wizard .form-item-biz-search-name input,
+#form-edit-gripe-wizard .form-item-biz-search-address input,
+#form-edit-gripe-wizard .form-item-biz-search-city input {
+  width: 150px;
+}
+
+#form-edit-gripe-wizard #edit-biz-search-button {
+  font-size: 1.1em;
+  font-weight: 400;
+  margin: 40px 0 0;
+}
+
+/*----------*/

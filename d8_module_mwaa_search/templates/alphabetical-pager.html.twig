@@ -1,0 +1,11 @@
+<nav aria-label="pagination-heading" class="alphabetical-pager">
+  <h4 id="pagination-heading" class="sr-only">Alphabetical Pagination</h4>
+  <ul class="pagination">
+    {% for letter in 'a'..'z' %}
+      {% set active = letter == current_letter|lower ? 'active' : '' %}
+      <li class="page-item {{ active }}"><a class="page-link" href="/{{ view_url }}/{{ letter }}">{{ letter|upper|t }}</a></li>
+    {% endfor %}
+    {% set active = current_letter in 'a'..'z'  ? '' : 'active' %}
+    <li class="page-item {{ active }}"><a class="page-link" href="/{{ view_url }}">{{ 'All'|t }}</a></li>
+  </ul>
+</nav>

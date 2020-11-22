@@ -1,0 +1,74 @@
+<?php
+
+/**
+ * @file
+ * Hooks for the mwaa_search module.
+ */
+
+use Drupal\Core\Form\FormStateInterface;
+
+/**
+ * Implements hook_theme().
+ */
+function mwaa_search_theme($existing, $type, $theme, $path) {
+  return [
+    'alphabetical_pager' => [
+      'variables' => [
+        'current_letter' => NULL,
+        'view_url' => NULL,
+      ],
+    ],
+  ];
+}
+
+/**
+ * Implements hook_views_data().
+ */
+function mwaa_search_views_data() {
+  $data['views']['mwaa_search_alphabetic_pager_area'] = [
+    'title' => t('Alphabetic Pager'),
+    'help' => t('Display an alphabetic pager for this view.'),
+    'area' => [
+      'id' => 'mwaa_search_alphabetic_pager_area',
+    ],
+  ];
+
+  return $data;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function mwaa_search_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  _mwaa_search_cargo_directory_form_alter($form, $form_state);
+}
+
+/**
+ * Alter the cargo directory exposed view form.
+ *
+ * @param array $form
+ *   The form.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   The form state.
+ */
+function _mwaa_search_cargo_directory_form_alter(array &$form, FormStateInterface $form_state) {
+  if ($form['#id'] !== 'views-exposed-form-contacts-page-1') {
+    return;
+  }
+
+  $form['actions']['export'] = [
+    '#type' => 'html_tag',
+    '#tag' => 'span',
+    '#value' => \Drupal::translation()->translate('Export results'),
+    '#attributes' => [
+      'class' => [
+        'js-export-results',
+        'btn-outline-secondary',
+      ],
+    ],
+    '#attached' => [
+      'library' => ['mwaa_search/cargo_directory'],
+    ],
+    '#weight' => 100,
+  ];
+}

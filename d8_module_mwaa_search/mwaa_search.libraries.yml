@@ -1,0 +1,7 @@
+# Custom module library for general purposes.
+cargo_directory:
+  js:
+    js/cargo-directory.js: {}
+  dependencies:
+    - core/jquery
+    - core/drupalSettings

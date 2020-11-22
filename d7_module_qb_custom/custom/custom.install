@@ -1,0 +1,40 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the custom module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function custom_install() {
+    $custom_atm_customer_search_strings = array(
+      'PlaceholderCustKey1' => 'PlaceholderCustValue1',
+      'PlaceholderCustKey2' => 'PlaceholderCustValue2',
+      'PlaceholderCustKey3' => 'PlaceholderCustValue3',
+      'PlaceholderCustKey4' => 'PlaceholderCustValue4',
+      'PlaceholderCustKey5' => 'PlaceholderCustValue5',
+      'PlaceholderCustKey6' => 'PlaceholderCustValue6',
+      'PlaceholderCustKey7' => 'PlaceholderCustValue7',
+      'PlaceholderCustKey8' => 'PlaceholderCustValue8',
+      'PlaceholderCustKey9' => 'PlaceholderCustValue9',
+      'PlaceholderCustKey10' => 'PlaceholderCustValue10',
+      'PlaceholderCustKey11' => 'PlaceholderCustValue11',
+    );
+    $custom_atm_account_search_strings = array(
+      'PlaceholderAcctKey1' => 'PlaceholderAcctValue1',
+      'PlaceholderAcctKey2' => 'PlaceholderAcctValue2',
+      'PlaceholderAcctKey3' => 'PlaceholderAcctValue3',
+      'PlaceholderAcctKey4' => 'PlaceholderAcctValue4',
+      'PlaceholderAcctKey5' => 'PlaceholderAcctValue5',
+      'PlaceholderAcctKey6' => 'PlaceholderAcctValue6',
+      'PlaceholderAcctKey7' => 'PlaceholderAcctValue7',
+      'PlaceholderAcctKey8' => 'PlaceholderAcctValue8',
+      'PlaceholderAcctKey9' => 'PlaceholderAcctValue9',
+      'PlaceholderAcctKey10' => 'PlaceholderAcctValue10',
+      'PlaceholderAcctKey11' => 'PlaceholderAcctValue11',
+    );
+    variable_set('custom_atm_customer_search_strings', $custom_atm_customer_search_strings);
+    variable_set('custom_atm_account_search_strings', $custom_atm_account_search_strings);
+}
