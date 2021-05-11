@@ -1,0 +1,8 @@
+name: IPC SyncDb
+type: module
+description: 'Provides functionality to sync data with SyncDb.'
+package: IPC
+core_version_requirement: ^8.8 || ^9
+dependencies:
+  - ipcsync:ipcsync
+  - advancedqueue:advancedqueue

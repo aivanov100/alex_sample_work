@@ -1,0 +1,41 @@
+ipc_syncdb.settings:
+  path: '/admin/commerce/sync-db'
+  defaults:
+    _form: '\Drupal\ipc_syncdb\Form\SyncDbSettings'
+    _title: 'SyncDB Data Sync settings'
+  requirements:
+    _permission: 'administer ipc_syncdb'
+  options:
+    _admin_route: TRUE
+
+ipc_syncdb.polling_routines:
+  path: '/admin/commerce/sync-db/polling'
+  defaults:
+    _form: '\Drupal\ipc_syncdb\Form\SyncDbDataSyncForm'
+    _title: 'Sync DB Data Sync'
+  requirements:
+    _permission: 'administer ipc_syncdb'
+
+ipc_syncdb.product_import_form:
+  path: '/admin/commerce/sync-db/import-product'
+  defaults:
+    _form: '\Drupal\ipc_syncdb\Form\ProductImportForm'
+    _title: 'Perform Product Import'
+  requirements:
+    _permission: 'administer ipc_syncdb'
+
+ipc_syncdb.user_import_form:
+  path: '/admin/commerce/sync-db/import-user'
+  defaults:
+    _form: '\Drupal\ipc_syncdb\Form\UserImportForm'
+    _title: 'Perform User Import'
+  requirements:
+    _permission: 'administer ipc_syncdb'
+
+ipc_syncdb.company_import_form:
+  path: '/admin/commerce/sync-db/import-company'
+  defaults:
+    _form: '\Drupal\ipc_syncdb\Form\CompanyImportForm'
+    _title: 'Perform Company Import'
+  requirements:
+    _permission: 'administer ipc_syncdb'

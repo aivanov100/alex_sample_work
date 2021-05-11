@@ -1,0 +1,12 @@
+uuid: a7123bb2-6a8a-49e2-a8dc-dddf0933d1e0
+langcode: en
+status: true
+dependencies: {  }
+id: ipc_company_sync
+label: 'IPC Company Sync'
+backend: database
+backend_configuration:
+  lease_time: 300
+processor: cron
+processing_time: 90
+locked: false

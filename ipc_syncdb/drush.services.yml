@@ -1,0 +1,6 @@
+services:
+  ipc_syncdb.commands:
+    class: \Drupal\ipc_syncdb\Commands\IpcSyncdbCommands
+    arguments: ['@entity_type.manager', '@ipc_syncdb.product_importer']
+    tags:
+      - { name: drush.command }

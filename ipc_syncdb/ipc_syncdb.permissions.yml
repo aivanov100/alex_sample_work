@@ -1,0 +1,4 @@
+'administer ipc_syncdb':
+  title: 'Administer IPC SyncDB'
+  description: 'Manage IPC SyncDB Data Sync configuration. View IPC SyncDB Data Sync status messages.'
+  'restrict access': TRUE

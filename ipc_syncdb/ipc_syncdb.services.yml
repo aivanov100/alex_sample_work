@@ -1,0 +1,31 @@
+services:
+  logger.channel.ipc_syncdb:
+    class: Drupal\Core\Logger\LoggerChannel
+    factory: logger.factory:get
+    arguments: [ 'ipc_syncdb' ]
+
+  ipc_syncdb.order_subscriber:
+    class: Drupal\ipc_syncdb\EventSubscriber\OrderSubscriber
+    arguments: ['@entity_type.manager', '@config.factory']
+    tags:
+      - { name: event_subscriber }
+
+  ipc_syncdb.api_helper:
+    class: Drupal\ipc_syncdb\ApiHelper
+    arguments: [ '@entity_type.manager', '@messenger', '@logger.channel.ipc_syncdb', '@state', '@config.factory' ]
+  
+  ipc_syncdb.transaction_manager:
+    class: Drupal\ipc_syncdb\TransactionManager
+    arguments: ['@entity_type.manager', '@date.formatter', '@messenger', '@logger.channel.ipc_syncdb', '@config.factory', '@state', '@ipc_syncdb.api_helper']
+
+  ipc_syncdb.product_importer:
+    class: Drupal\ipc_syncdb\ProductImporter
+    arguments: ['@entity_type.manager', '@messenger', '@logger.channel.ipc_syncdb', '@state', '@config.factory', '@ipc_syncdb.api_helper']
+
+  ipc_syncdb.user_importer:
+    class: Drupal\ipc_syncdb\UserImporter
+    arguments: ['@entity_type.manager', '@messenger', '@logger.channel.ipc_syncdb', '@ipc_syncdb.company_importer', '@state', '@config.factory', '@ipc_syncdb.api_helper']
+
+  ipc_syncdb.company_importer:
+    class: Drupal\ipc_syncdb\CompanyImporter
+    arguments: ['@entity_type.manager', '@messenger', '@logger.channel.ipc_syncdb', '@state', '@config.factory', '@ipc_syncdb.api_helper']

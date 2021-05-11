@@ -1,0 +1,7 @@
+id: ipc_transaction_sync
+label: 'IPC Transaction Sync'
+backend: database
+backend_configuration: {}
+processor: cron
+processing_time: 180
+locked: true

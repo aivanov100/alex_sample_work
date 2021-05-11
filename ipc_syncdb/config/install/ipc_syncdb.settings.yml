@@ -1,0 +1,6 @@
+export_orders_to_syncdb: true
+import_orders_from_syncdb: true
+log_transaction_api_calls: false
+transaction_api_log_level: Error
+entities_api_log_level: Error
+log_entities_api_calls: false

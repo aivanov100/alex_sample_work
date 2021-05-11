@@ -1,0 +1,54 @@
+<?php
+
+/**
+ * @file
+ * Contains ipc_syncdb.module.
+ */
+
+/**
+ * Implements hook_user_login().
+ */
+function ipc_syncdb_user_login($account) {
+  try {
+    $user_importer = \Drupal::service('ipc_syncdb.user_importer');
+    $user_importer->importUserByEmail($account->getEmail());
+  }
+  catch (\Exception $e) {
+    \Drupal::logger('ipc_syncdb')->error(t('User Importer - encountered exception: @message', [
+      '@message' => $e->getMessage(),
+    ]));
+  }
+}
+
+/**
+ * A cron hook to schedule polling SyncDB for updates.
+ *
+ * Implements hook_cron().
+ */
+function ipc_syncdb_cron() {
+  \Drupal::service('ipc_syncdb.user_importer')->pollForChangesToUsers();
+
+  // This is commented out pending resolution of IEC-584.
+  // \Drupal::service('ipc_syncdb.product_importer')->pollForChangesToProducts();
+
+  /** @var \Drupal\ipc_syncdb\TransactionManager $transaction_manager */
+  $transaction_manager = \Drupal::service('ipc_syncdb.transaction_manager');
+  $last_syncdb_transaction_import = $transaction_manager->getLastSyncDbTransactionImport();
+  if (empty($last_syncdb_transaction_import) || (time() - $last_syncdb_transaction_import > 300)) {
+    $transaction_manager->enqueueTransactionsToUpdateOrders();
+  }
+}
+
+/**
+ * Callback function for ultimate_cron job: ipc_syncdb_company_sync.
+ */
+function ipc_syncdb_company_sync() {
+  \Drupal::service('ipc_syncdb.company_importer')->pollForChangesToCompanies();
+}
+
+/**
+ * Callback function for ultimate_cron job: ipc_syncdb_user_sync.
+ */
+function ipc_syncdb_user_sync() {
+  \Drupal::service('ipc_syncdb.user_importer')->pollForChangesToUsers();
+}

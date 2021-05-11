@@ -1,0 +1,29 @@
+ipc_syncdb.settings:
+  title: SyncDB Data Sync
+  route_name: ipc_syncdb.settings
+  parent: 'commerce.admin_commerce'
+  weight: 100
+
+ipc_syncdb.product_import_form:
+  title: Product Importer
+  route_name: ipc_syncdb.product_import_form
+  parent: 'ipc_syncdb.settings'
+  weight: 105
+
+ipc_syncdb.user_import_form:
+  title: User Importer
+  route_name: ipc_syncdb.user_import_form
+  parent: 'ipc_syncdb.settings'
+  weight: 110
+
+ipc_syncdb.company_import_form:
+  title: Company Importer
+  route_name: ipc_syncdb.company_import_form
+  parent: 'ipc_syncdb.settings'
+  weight: 120
+
+ipc_syncdb.polling_routines_form:
+  title: Polling Routines
+  route_name: ipc_syncdb.polling_routines
+  parent: 'ipc_syncdb.settings'
+  weight: 130
