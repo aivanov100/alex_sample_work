@@ -11,19 +11,3 @@ ipc_syncdb.settings:
       type: boolean
       label: 'Import salesorder transactions from SyncDB'
       translatable: false
-    transaction_api_log_level:
-      type: string
-      label: 'IPCTransactionAPI logLevel'
-      translatable: false
-    log_transaction_api_calls:
-      type: boolean
-      label: 'Log IPCTransactionAPI API calls'
-      translatable: false
-    entities_api_log_level:
-      type: string
-      label: 'IPCEntitiesAPI logLevel'
-      translatable: false
-    log_entities_api_calls:
-      type: boolean
-      label: 'Log IPCEntitiesAPI API calls'
-      translatable: false

@@ -47,6 +47,8 @@ class IpcSyncdbCommands extends DrushCommands {
   /**
    * Run Product Sync polling routine to enqueue products for import.
    *
+   * @todo Refactor name of this command to be ipc_syncdb:full-product-sync.
+   *
    * @usage ipc_syncdb:product-sync
    *
    * @command ipc_syncdb:product-sync
@@ -105,6 +107,70 @@ class IpcSyncdbCommands extends DrushCommands {
       $this->productImporter->setPublishedStatusForProductsAndVariations();
       $this->logger()->success(dt('Execution complete.'));
     }
+  }
+
+  /**
+   * Trigger Order Sync polling routine.
+   *
+   * @param array $options
+   *   Associative array of options. Values come from cli, aliases, config, etc.
+   * @option modified-on-after
+   *   The modifiedOnAfter value for the API call.
+   * @usage trigger-order-sync
+   * @usage trigger-order-sync --modified-on-after="2021-05-23T16:17:36"
+   *
+   * @command ipc_syncdb:order-sync:trigger-polling-routine
+   * @aliases trigger-order-sync
+   */
+  public function triggerOrderSyncPollingRoutine(array $options = ['modified-on-after' => '']) {
+    $modified_on_after = $options['modified-on-after'];
+    \Drupal::service('ipc_syncdb.transaction_manager')->pollForChangesToOrders($modified_on_after);
+  }
+
+  /**
+   * Trigger Product Sync polling routine.
+   *
+   * @command ipc_syncdb:product-sync:trigger-polling-routine
+   * @aliases trigger-product-sync
+   */
+  public function triggerProductSyncPollingRoutine() {
+    \Drupal::service('ipc_syncdb.product_importer')->pollForChangesToProducts();
+  }
+
+  /**
+   * Trigger User Sync polling routine.
+   *
+   * @command ipc_syncdb:user-sync:trigger-polling-routine
+   * @aliases trigger-user-sync
+   */
+  public function triggerUserSyncPollingRoutine() {
+    \Drupal::service('ipc_syncdb.user_importer')->pollForChangesToUsers();
+  }
+
+  /**
+   * Trigger Company Sync polling routine.
+   *
+   * @command ipc_syncdb:company-sync:trigger-polling-routine
+   * @aliases trigger-company-sync
+   */
+  public function triggerCompanySyncPollingRoutine() {
+    \Drupal::service('ipc_syncdb.company_importer')->pollForChangesToCompanies();
+  }
+
+  /**
+   * Trigger PostTransaction for a specific order.
+   *
+   * @param int $order_number
+   *   The order number.
+   *
+   * @command ipc_syncdb:post-transaction
+   * @aliases post-transaction
+   *
+   * @usage post-transaction 100
+   */
+  public function triggerPostTransaction(int $order_number) {
+    $order = $this->entityTypeManager->getStorage('commerce_order')->load($order_number);
+    \Drupal::service('ipc_syncdb.transaction_manager')->postTransaction($order);
   }
 
 }

@@ -53,13 +53,6 @@ class CompanyImporter {
   protected $configFactory;
 
   /**
-   * The api helper.
-   *
-   * @var \Drupal\ipc_syncdb\ApiHelper
-   */
-  protected $apiHelper;
-
-  /**
    * Constructs a new CompanyImporter object.
    *
    * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
@@ -72,16 +65,13 @@ class CompanyImporter {
    *   The state.
    * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
    *   The configuration factory.
-   * @param \Drupal\ipc_syncdb\ApiHelper $api_helper
-   *   The api helper.
    */
-  public function __construct(EntityTypeManagerInterface $entity_type_manager, MessengerInterface $messenger, LoggerInterface $logger, StateInterface $state, ConfigFactoryInterface $config_factory, ApiHelper $api_helper) {
+  public function __construct(EntityTypeManagerInterface $entity_type_manager, MessengerInterface $messenger, LoggerInterface $logger, StateInterface $state, ConfigFactoryInterface $config_factory) {
     $this->entityTypeManager = $entity_type_manager;
     $this->messenger = $messenger;
     $this->logger = $logger;
     $this->state = $state;
     $this->configFactory = $config_factory;
-    $this->apiHelper = $api_helper;
   }
 
   /**
@@ -89,19 +79,45 @@ class CompanyImporter {
    *
    * @param int $sync_db_id
    *   The SyncDB Account ID of the company.
+   *
+   * @return \Drupal\group\Entity\GroupInterface
+   *   The company.
+   *
+   * @throws \Drupal\Core\Entity\EntityMalformedException
+   * @throws \Drupal\Core\Entity\EntityStorageException
    */
   public function importCompany($sync_db_id) {
     $requestVariables = new \stdClass();
     $requestVariables->accountId = $sync_db_id;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('entities_api_log_level');
     $response_company = UserSync::getCompany($requestVariables);
-    $this->apiHelper->processApiResponse($response_company, 'getCompany', 'accountId', $sync_db_id);
-    if ($config->get('log_entities_api_calls')) {
-      $this->apiHelper->generateDetailedLogMessage('getCompany', $requestVariables, $response_company);
+    if ($response_company['company']) {
+      $company = $this->createOrUpdateCompany($response_company['company']);
+      $this->displayCompanyImportSuccessMessage($company);
+      return $company;
     }
-    $company = $this->createOrUpdateCompany($response_company['company']);
-    $this->displayCompanyImportSuccessMessage($company);
+  }
+
+  /**
+   * Imports company with the corresponding Netsuite Account ID.
+   *
+   * @param int $netsuite_id
+   *   The Netsuite Account ID of the company.
+   *
+   * @return \Drupal\group\Entity\GroupInterface
+   *   The company.
+   *
+   * @throws \Drupal\Core\Entity\EntityMalformedException
+   * @throws \Drupal\Core\Entity\EntityStorageException
+   */
+  public function importCompanyByNetsuiteId($netsuite_id) {
+    $requestVariables = new \stdClass();
+    $requestVariables->nsAccountId = $netsuite_id;
+    $response_company = UserSync::getCompanyByNsAccountId($requestVariables);
+    if ($response_company['company']) {
+      $company = $this->createOrUpdateCompany($response_company['company']);
+      $this->displayCompanyImportSuccessMessage($company);
+      return $company;
+    }
   }
 
   /**
@@ -110,8 +126,11 @@ class CompanyImporter {
    * @param array $company_from_response
    *   The company data from the Api response.
    *
-   * @return Drupal\group\Entity\Group
+   * @return \Drupal\group\Entity\GroupInterface
    *   The company.
+   *
+   * @throws \Drupal\Core\Entity\EntityMalformedException
+   * @throws \Drupal\Core\Entity\EntityStorageException
    */
   public function createOrUpdateCompany(array $company_from_response) {
     $company = $this->getCompanyIfCompanyExists($company_from_response);
@@ -136,10 +155,7 @@ class CompanyImporter {
     $requestedPage = 1;
     $requestVariables = new \stdClass();
     $requestVariables->requestedPage = $requestedPage;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('entities_api_log_level');
     $response = UserSync::getCompanyList($requestVariables);
-    $this->apiHelper->processApiResponse($response, 'getCompanyList', 'requestedPage', $requestedPage);
     $companyList = $response['companyList'];
 
     while ($companyList) {
@@ -148,7 +164,6 @@ class CompanyImporter {
       $requestedPage++;
       $requestVariables->requestedPage = $requestedPage;
       $response = UserSync::getCompanyList($requestVariables);
-      $this->apiHelper->processApiResponse($response, 'getCompanyList', 'requestedPage', $requestedPage);
       $companyList = $response['companyList'];
     }
 
@@ -205,11 +220,14 @@ class CompanyImporter {
   protected function setCompanyFields(Group &$company, array $company_from_response) {
     $company->setOwnerId(1);
     $company->set('syncdb_account_number', $company_from_response['accountId']);
+    $company->set('netsuite_id', $company_from_response['nsAccountId']);
     $company->set('label', $company_from_response['companyName']);
     $company->set('billing_email', $company_from_response['billingContactEmail']);
+    $company->set('credit_hold', $company_from_response['creditOnHold']);
     $company->save();
     $this->setPriceLevelField($company, $company_from_response);
     $this->updateCustomerProfiles($company, $company_from_response);
+    $this->setPaymentTermsField($company, $company_from_response);
   }
 
   /**
@@ -222,10 +240,6 @@ class CompanyImporter {
    */
   protected function setPriceLevelField(Group &$company, array $company_from_response) {
     switch ($company_from_response['companyPriceLevel']['priceLevel']) {
-      case 'Non-Member':
-        $price_level = 'nonmember';
-        break;
-
       case 'Member':
         $price_level = 'member';
         break;
@@ -234,10 +248,48 @@ class CompanyImporter {
         $price_level = 'distributor';
         break;
 
+      case 'Non-Member':
       default:
-        $price_level = '';
+        $price_level = 'nonmember';
     }
     $company->set('price_level', $price_level);
+    $company->save();
+  }
+
+  /**
+   * Sets the payment_terms field.
+   *
+   * @param Drupal\group\Entity\Group $company
+   *   The company.
+   * @param array $company_from_response
+   *   The company from the Api response.
+   */
+  protected function setPaymentTermsField(Group &$company, array $company_from_response) {
+    switch ($company_from_response['salesOrderTerms']['salesOrderTerms']) {
+      case 'Net 15':
+        $payment_terms = 'net15';
+        break;
+
+      case 'Net 30':
+        $payment_terms = 'net30';
+        break;
+
+      case 'Net 35':
+        $payment_terms = 'net35';
+        break;
+
+      case 'Net 45':
+        $payment_terms = 'net45';
+        break;
+
+      case 'Net 60':
+        $payment_terms = 'net60';
+        break;
+
+      default:
+        $payment_terms = 'ineligible';
+    }
+    $company->set('payment_terms', $payment_terms);
     $company->save();
   }
 
@@ -252,16 +304,13 @@ class CompanyImporter {
   protected function updateCustomerProfiles(Group &$company, array $company_from_response) {
     $requestVariables = new \stdClass();
     $requestVariables->accountId = $company_from_response['accountId'];
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('entities_api_log_level');
     $response_address_list = UserSync::getCompanyAddressList($requestVariables);
-    $this->apiHelper->processApiResponse($response_address_list, 'getCompanyAddressList', 'accountId', $requestVariables->accountId);
-    if ($config->get('log_entities_api_calls')) {
-      $this->apiHelper->generateDetailedLogMessage('getCompanyAddressList', $requestVariables, $response_address_list);
-    }
     foreach ($response_address_list['addressList'] as $address_from_response) {
       $profile = $this->updateProfile($address_from_response);
-      $company->addContent($profile, 'group_profile:customer');
+      // Add the profile to the company, if not already referenced by the group.
+      if (!$company->getContentByEntityId('group_profile:customer', $profile->id())) {
+        $company->addContent($profile, 'group_profile:customer');
+      }
     }
   }
 
@@ -271,7 +320,7 @@ class CompanyImporter {
    * @param array $address_from_response
    *   The address data from the Api response.
    *
-   * @return Drupal\profile\Entity\Profile
+   * @return \Drupal\profile\Entity\ProfileInterface
    *   The profile.
    */
   public function updateProfile(array $address_from_response) {
@@ -304,6 +353,7 @@ class CompanyImporter {
       'locality' => $address_from_response['city'],
       'administrative_area' => $address_from_response['stateOrProvince'],
       'postal_code' => $address_from_response['postalCode'],
+      'organization' => $address_from_response['addressee'],
     ];
     $profile->set('address', $address);
     if ($address_from_response['primaryAddress'] == TRUE) {
@@ -314,6 +364,8 @@ class CompanyImporter {
     $profile->set('default_shipping_address', $address_from_response['defaultShippingAddress']);
     $profile->set('home_address', $address_from_response['homeAddress']);
     $profile->set('residential_address', $address_from_response['residentialAddress']);
+    $profile->set('phone_number', $address_from_response['phone']);
+    $profile->set('address_attention_to', $address_from_response['attention']);
     $profile->save();
   }
 
@@ -344,7 +396,7 @@ class CompanyImporter {
    */
   protected function displayCompanyImportSuccessMessage(Group $company) {
     $account = \Drupal::currentUser();
-    if ($account->hasPermission('administer ipc_syncdb')) {
+    if ($account->hasPermission('administer ipcsync')) {
       $this->messenger->addMessage(t('Company imported successfully: <a href=":url">:label</a>', [
         ':url' => $company->toUrl()->toString(),
         ':label' => $company->label(),
@@ -381,26 +433,22 @@ class CompanyImporter {
   protected function getUpdatedCompanyIdsFromSyncDb() {
     $run_time = date('Y-m-d\TH:i:s');
     $all_ids = [];
+
     $requestVariables = new \stdClass();
     $requestedPage = 1;
     $requestVariables->requestedPage = $requestedPage;
     $last_run_time = $this->state->get('ipcsync_company_importer_last_run');
-    $modifiedOnAfter = $last_run_time ? $last_run_time : $run_time;
+    $modifiedOnAfter = $last_run_time ? $last_run_time : ApiHelper::POLLING_ROUTINE_START_TIME;
     $requestVariables->modifiedOnAfter = $modifiedOnAfter;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('entities_api_log_level');
-    $response = UserSync::getCompanyList($requestVariables);
-    $this->apiHelper->processApiResponse($response, 'getCompanyList', 'modifiedOnAfter', $modifiedOnAfter);
-    $response_list = $response['companyList'];
 
+    $response = UserSync::getCompanyList($requestVariables);
+    $response_list = $response['companyList'];
     while ($response_list) {
       $ids = array_column($response_list, 'accountId');
       $all_ids = array_merge($all_ids, $ids);
       $requestedPage++;
       $requestVariables->requestedPage = $requestedPage;
-      $requestVariables->modifiedOnAfter = $modifiedOnAfter;
       $response = UserSync::getCompanyList($requestVariables);
-      $this->apiHelper->processApiResponse($response, 'getCompanyList', 'modifiedOnAfter', $modifiedOnAfter);
       $response_list = $response['companyList'];
     }
 

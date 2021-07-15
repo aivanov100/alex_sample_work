@@ -21,22 +21,25 @@ function ipc_syncdb_user_login($account) {
 }
 
 /**
- * A cron hook to schedule polling SyncDB for updates.
+ * Implements hook_module_implements_alter().
  *
- * Implements hook_cron().
+ * Move the commerce_cart user login action to last so the current cart is
+ * assigned to the user after the price levels have been set.
  */
-function ipc_syncdb_cron() {
-  \Drupal::service('ipc_syncdb.user_importer')->pollForChangesToUsers();
-
-  // This is commented out pending resolution of IEC-584.
-  // \Drupal::service('ipc_syncdb.product_importer')->pollForChangesToProducts();
-
-  /** @var \Drupal\ipc_syncdb\TransactionManager $transaction_manager */
-  $transaction_manager = \Drupal::service('ipc_syncdb.transaction_manager');
-  $last_syncdb_transaction_import = $transaction_manager->getLastSyncDbTransactionImport();
-  if (empty($last_syncdb_transaction_import) || (time() - $last_syncdb_transaction_import > 300)) {
-    $transaction_manager->enqueueTransactionsToUpdateOrders();
+function ipc_syncdb_module_implements_alter(&$implementations, $hook) {
+  if ($hook == 'user_login' && isset($implementations['commerce_cart'])) {
+    $commerce_cart = $implementations['commerce_cart'];
+    unset($implementations['commerce_cart']);
+    $implementations['commerce_cart'] = $commerce_cart;
   }
+}
+
+/**
+ * Implements hook_menu_links_discovered_alter().
+ */
+function ipc_syncdb_menu_links_discovered_alter(&$links) {
+  // Remove link for the overridden IPCSync Settings form.
+  unset($links['ipcsync.settings']);
 }
 
 /**
@@ -51,4 +54,18 @@ function ipc_syncdb_company_sync() {
  */
 function ipc_syncdb_user_sync() {
   \Drupal::service('ipc_syncdb.user_importer')->pollForChangesToUsers();
+}
+
+/**
+ * Callback function for ultimate_cron job: ipc_syncdb_product_sync.
+ */
+function ipc_syncdb_product_sync() {
+  \Drupal::service('ipc_syncdb.product_importer')->pollForChangesToProducts();
+}
+
+/**
+ * Callback function for ultimate_cron job: ipc_syncdb_order_sync.
+ */
+function ipc_syncdb_order_sync() {
+  \Drupal::service('ipc_syncdb.transaction_manager')->pollForChangesToOrders();
 }

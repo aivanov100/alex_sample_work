@@ -61,13 +61,6 @@ class ProductImporter {
   protected $configFactory;
 
   /**
-   * The api helper.
-   *
-   * @var \Drupal\ipc_syncdb\ApiHelper
-   */
-  protected $apiHelper;
-
-  /**
    * Constructs a new ProductImporter object.
    *
    * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
@@ -80,16 +73,13 @@ class ProductImporter {
    *   The state.
    * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
    *   The configuration factory.
-   * @param \Drupal\ipc_syncdb\ApiHelper $api_helper
-   *   The api helper.
    */
-  public function __construct(EntityTypeManagerInterface $entity_type_manager, MessengerInterface $messenger, LoggerInterface $logger, StateInterface $state, ConfigFactoryInterface $config_factory, ApiHelper $api_helper) {
+  public function __construct(EntityTypeManagerInterface $entity_type_manager, MessengerInterface $messenger, LoggerInterface $logger, StateInterface $state, ConfigFactoryInterface $config_factory) {
     $this->entityTypeManager = $entity_type_manager;
     $this->messenger = $messenger;
     $this->logger = $logger;
     $this->state = $state;
     $this->configFactory = $config_factory;
-    $this->apiHelper = $api_helper;
   }
 
   /**
@@ -105,13 +95,7 @@ class ProductImporter {
     // Get the product data from the API.
     $requestVariables = new \stdClass();
     $requestVariables->productId = $sync_db_id;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('transaction_api_log_level');
     $response = ProductSync::getProductByProductId($requestVariables);
-    $this->apiHelper->processApiResponse($response, 'getProductByProductId', 'productId', $sync_db_id);
-    if ($config->get('log_transaction_api_calls')) {
-      $this->apiHelper->generateDetailedLogMessage('getProductByProductId', $requestVariables, $response);
-    }
     $product_from_response = $response['product'];
 
     // Exit if productFromat value is not set, as it is necessary for import.
@@ -127,13 +111,13 @@ class ProductImporter {
     }
     $product = $this->createOrUpdateProduct($product_type, $product_from_response);
 
-    $product_variation_type = $this->determineProductVariationType($product_from_response['format']['productFormat']);
+    $product_variation_type = $this->determineProductVariationType($product_from_response['format']['productFormat'], $product_from_response['formatCode']);
     // Exit if unable to map productFormat value to a product variation type.
     if (!$product_variation_type) {
       $this->generateProductImportErrorMessage(self::VARIATION_TYPE_NOT_FOUND, $sync_db_id, $product_from_response['format']['productFormat']);
       return "Skipped";
     }
-    $this->deleteOrphanedVariations($product_from_response, $product, $product_variation_type);
+    $this->ensureVariationIsAssignedToCorrectProduct($product_from_response, $product);
     $variation = $this->createOrUpdateProductVariation($product->getVariations(), $product_variation_type, $product_from_response);
 
     $product->addVariation($variation);
@@ -163,6 +147,7 @@ class ProductImporter {
       $product_from_response['specialProductCode'],
       $product_from_response['language']['language'],
       $product_from_response['revisionCode'],
+      $product_from_response['productId']
     );
     if (!$product) {
       $product = Product::create([
@@ -214,6 +199,9 @@ class ProductImporter {
         }
         if ($newly_created) {
           $this->setDocumentNumbersField($product, $product_from_response);
+        }
+        if (isset($product_from_response['variety']) && isset($product_from_response['variety']['productVariety'])) {
+          $this->setTaxonomyTermField('product_variety', $product, 'product_variety', $product_from_response['variety']['productVariety']);
         }
         $product->save();
         break;
@@ -300,7 +288,7 @@ class ProductImporter {
         $release_date = substr($product_from_response['releaseDate'], 0, 10);
         $variation->set('release_date', $release_date);
         $this->setProductVariationFormatField($variation, $product_from_response);
-        $variation->set('taxation_code', $product_from_response['taxSchedule']['taxSchedule']);
+        $variation->set('tax_schedule', $product_from_response['taxSchedule']['nsTaxScheduleId']);
         $this->setProductVariationProductFormatField($variation, $product_from_response);
         $variation->set('dropshipped', $product_from_response['dropShipProduct']);
         $variation->set('stock_level', $product_from_response['quantityAvailable']);
@@ -308,11 +296,12 @@ class ProductImporter {
         break;
 
       case 'digital_document':
+      case 'multi_device_license':
         $this->setCoreFieldsCommonToAllVariations($variation, $product_from_response, $newly_created);
         $release_date = substr($product_from_response['releaseDate'], 0, 10);
         $variation->set('release_date', $release_date);
         $this->setProductVariationFormatField($variation, $product_from_response);
-        $variation->set('taxation_code', $product_from_response['taxSchedule']['taxSchedule']);
+        $variation->set('tax_schedule', $product_from_response['taxSchedule']['nsTaxScheduleId']);
         $variation->set('drm', $product_from_response['drm']);
         $this->setProductVariationProductFormatField($variation, $product_from_response);
         $this->setProductVariationItemTypeField($variation, $product_from_response);
@@ -326,6 +315,7 @@ class ProductImporter {
       case 'service':
         $this->setCoreFieldsCommonToAllVariations($variation, $product_from_response, $newly_created);
         $variation->set('minimum_order_quantity', $product_from_response['minimumQuantity']);
+        $variation->set('tax_schedule', $product_from_response['taxSchedule']['nsTaxScheduleId']);
         $variation->save();
         break;
 
@@ -466,18 +456,13 @@ class ProductImporter {
     if ($sync_db_id) {
       $requestVariables = new \stdClass();
       $requestVariables->productId = $sync_db_id;
-      $config = \Drupal::configFactory()->get('ipc_syncdb.settings');
-      $requestVariables->logLevel = $config->get('transaction_api_log_level');
       $response = ProductSync::getProductByProductId($requestVariables);
-      \Drupal::service('ipc_syncdb.api_helper')->processApiResponse($response, 'getProductByProductId', 'productId', $sync_db_id);
-      if ($config->get('log_transaction_api_calls')) {
-        \Drupal::service('ipc_syncdb.api_helper')->generateDetailedLogMessage('getProductByProductId', $requestVariables, $response);
-      }
       $product_from_response = $response['product'];
 
       $display_in_website = $product_from_response['displayInWebsite'];
       $inactive = $product_from_response['inActive'];
-      if ($display_in_website && !$inactive) {
+      $discontinued_item = $product_from_response['discontinuedItem'];
+      if ($display_in_website && !$inactive && !$discontinued_item) {
         $variation->set('status', TRUE);
         $variation->save();
         $product_id = $variation->getProductId();
@@ -625,21 +610,21 @@ class ProductImporter {
 
   /**
    * Get the product IDs for all products that have been updated since last run.
+   *
+   * @throws \GuzzleHttp\Exception\GuzzleException
    */
   protected function getUpdatedProductIdsFromSyncDb() {
     $run_time = date('Y-m-d\TH:i:s');
     $all_ids = [];
+
     $requestVariables = new \stdClass();
     $requestedPage = 1;
     $requestVariables->requestedPage = $requestedPage;
+
     $last_run_time = $this->state->get('ipc_product_sync_product_importer_last_run');
-    $modifiedOnAfter = $last_run_time ? $last_run_time : $run_time;
+    $modifiedOnAfter = $last_run_time ? $last_run_time : ApiHelper::POLLING_ROUTINE_START_TIME;
     $requestVariables->modifiedOnAfter = $modifiedOnAfter;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('transaction_api_log_level');
     $response = ProductSync::getProductList($requestVariables);
-    $this->apiHelper->processApiResponse($response, 'getProductList', 'modifiedOnAfter', $modifiedOnAfter);
-    // @todo Fix error handling - Exit function if response is not a Success.
     $productList = $response['productList'];
 
     while ($productList) {
@@ -647,10 +632,7 @@ class ProductImporter {
       $all_ids = array_merge($all_ids, $ids);
       $requestedPage++;
       $requestVariables->requestedPage = $requestedPage;
-      $requestVariables->modifiedOnAfter = $modifiedOnAfter;
       $response = ProductSync::getProductList($requestVariables);
-      $this->apiHelper->processApiResponse($response, 'getProductList', 'modifiedOnAfter', $modifiedOnAfter);
-      // @todo Fix error handling - Exit function if response is not a Success.
       $productList = $response['productList'];
     }
 
@@ -660,16 +642,15 @@ class ProductImporter {
 
   /**
    * Get the product IDs for all products from SyncDB via IPCTransactionAPI.
+   *
+   * @throws \GuzzleHttp\Exception\GuzzleException
    */
   protected function getAllProductIdsFromSyncDb() {
     $all_ids = [];
     $requestedPage = 1;
     $requestVariables = new \stdClass();
     $requestVariables->requestedPage = $requestedPage;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('transaction_api_log_level');
     $response = ProductSync::getProductList($requestVariables);
-    $this->apiHelper->processApiResponse($response, 'getProductList', 'requestedPage', $requestedPage);
     $productList = $response['productList'];
 
     while ($productList) {
@@ -678,7 +659,6 @@ class ProductImporter {
       $requestedPage++;
       $requestVariables->requestedPage = $requestedPage;
       $response = ProductSync::getProductList($requestVariables);
-      $this->apiHelper->processApiResponse($response, 'getProductList', 'requestedPage', $requestedPage);
       $productList = $response['productList'];
     }
 
@@ -688,11 +668,11 @@ class ProductImporter {
   /**
    * Determines product type of the imported product.
    *
-   * @param string $format
+   * @param string $product_format
    *   The value of the productFormat field returned from the api call.
    */
-  protected function determineProductType($format) {
-    switch ($format) {
+  protected function determineProductType($product_format) {
+    switch ($product_format) {
       case 'CD':
       case 'DVD':
       case 'Hard Copy':
@@ -704,6 +684,7 @@ class ProductImporter {
         return 'kit';
 
       case 'Subscription':
+      case 'Exam Funds':
         return 'service';
 
       default:
@@ -714,24 +695,34 @@ class ProductImporter {
   /**
    * Determines product variation type of the imported product.
    *
-   * @param string $format
+   * @param string $product_format
+   *   The value of the productFormat field returned from the api call.
+   * @param string $format_code
    *   The value of the productFormat field returned from the api call.
    */
-  protected function determineProductVariationType($format) {
-    switch ($format) {
+  protected function determineProductVariationType($product_format, $format_code) {
+    switch ($product_format) {
       case 'CD':
       case 'DVD':
       case 'Hard Copy':
         return 'physical_document';
 
-      case 'Download':
       case 'Download Item':
         return 'digital_document';
+
+      case 'Download':
+        if ($format_code == 'MDL') {
+          return 'multi_device_license';
+        }
+        else {
+          return 'digital_document';
+        }
 
       case 'Kit/Bundle':
         return 'kit';
 
       case 'Subscription':
+      case 'Exam Funds':
         return 'service';
 
       default:
@@ -752,21 +743,74 @@ class ProductImporter {
    *   The value of the language field returned from the api call.
    * @param string $revision
    *   The value of the revision field returned from the api call.
+   * @param string $syncdb_id
+   *   Optional SyncDB ID to look for on a product's variation.
    */
-  protected function getProductIfProductExists($product_type, $prog_code, $spec_code, $language, $revision) {
+  protected function getProductIfProductExists($product_type, $prog_code, $spec_code, $language, $revision, $syncdb_id = '') {
     $product_storage = $this->entityTypeManager->getStorage('commerce_product');
     $language_tid = $language ? $this->getTaxonomyTermTid('languages', $language) : '';
     $revision_tid = isset($revision) ? $this->getTaxonomyTermTid('revisions', $revision) : '';
-    $products = $product_storage->loadByProperties([
-      'type' => $product_type,
-      'netsuite_prog_code' => $prog_code,
-      'netsuite_spec_code' => $spec_code,
-      'language' => ['target_id' => $language_tid],
-      'revision' => ['target_id' => $revision_tid],
-    ]);
-    if ($products) {
-      $product = reset($products);
-      return $product;
+
+    // Build an entity query that can properly accommodate empty field values.
+    $query = $product_storage->getQuery();
+    $query
+      ->condition('type', $product_type)
+      ->sort('product_id', 'DESC');
+
+    // Service products are matched via SyncDB ID on a child variation, because
+    // they do not currently have all the same matching field values set as the
+    // other product types. Additionally, we know each Service product will
+    // have only a single variation.
+    if ($product_type == 'service') {
+      // If we did not get a SyncDB ID, return FALSE now.
+      if (empty($syncdb_id)) {
+        return FALSE;
+      }
+
+      $query->condition('variations.entity:commerce_product_variation.syncdb_id', $syncdb_id);
+    }
+
+    // Only documents and kits currently match on the field values.
+    if (in_array($product_type, ['document', 'kit'])) {
+      // All product types should have a language value set. Only Document and
+      // Kit products will have the others set at the moment.
+      if (empty($language_tid)) {
+        $query->notExists('language');
+      }
+      else {
+        $query->condition('language.target_id', $language_tid);
+      }
+
+      // This value may be '0', so we cannot just check if it's empty().
+      if (is_null($prog_code) || $prog_code === '') {
+        $query->notExists('netsuite_prog_code');
+      }
+      else {
+        $query->condition('netsuite_prog_code', $prog_code);
+      }
+
+      // This value may be '0', so we cannot just check if it's empty().
+      if (is_null($spec_code) || $spec_code === '') {
+        $query->notExists('netsuite_spec_code');
+      }
+      else {
+        $query->condition('netsuite_spec_code', $spec_code);
+      }
+
+      if (empty($revision_tid)) {
+        $query->notExists('revision');
+      }
+      else {
+        $query->condition('revision.target_id', $revision_tid);
+      }
+    }
+
+    $result = $query->execute();
+    $product_ids = array_values($result);
+
+    if ($product_ids) {
+      $product_id = reset($product_ids);
+      return $product_storage->load($product_id);
     }
     return FALSE;
   }
@@ -952,7 +996,7 @@ class ProductImporter {
    */
   protected function displayProductImportSuccessMessage(Product $product) {
     $account = \Drupal::currentUser();
-    if ($account->hasPermission('administer ipc_syncdb')) {
+    if ($account->hasPermission('administer ipcsync')) {
       $this->messenger->addMessage(t('Product imported successfully: <a href=":url">:title</a>', [
         ':url' => $product->toUrl()->toString(),
         ':title' => $product->getTitle(),
@@ -1071,6 +1115,12 @@ class ProductImporter {
   protected function setProductVariationLicenseFields(ProductVariation &$variation, array $product_from_response) {
     if ($product_from_response['drm'] == TRUE) {
       $variation->set('license_expiration', ['target_plugin_id' => 'unlimited']);
+      $variation->set('license_type', [
+        'target_plugin_id' => 'commerce_file',
+        'target_plugin_configuration' => [
+          'file_download_limit' => 0,
+        ],
+      ]);
     }
     else {
       $variation->set('license_expiration', [
@@ -1103,13 +1153,7 @@ class ProductImporter {
   protected function updatePriceLists(ProductVariation &$variation, array $product_from_response) {
     $requestVariables = new \stdClass();
     $requestVariables->productId = $product_from_response['productId'];
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('transaction_api_log_level');
     $response = ProductSync::getProductPriceListByProductId($requestVariables);
-    $this->apiHelper->processApiResponse($response, 'getProductPriceListByProductId', 'productId', $requestVariables->productId);
-    if ($config->get('log_transaction_api_calls')) {
-      $this->apiHelper->generateDetailedLogMessage('getProductPriceListByProductId', $requestVariables, $response);
-    }
 
     $price_list_from_response = $response['productPriceList'];
     $currency_prices = $price_list_from_response['currencyPrices'];
@@ -1118,6 +1162,9 @@ class ProductImporter {
       if ($currency != 'US Dollar') {
         break;
       }
+      $has_nonmember_price = FALSE;
+      $has_member_price = FALSE;
+      $has_distributor_price = FALSE;
       $priceLevelPrices = $currency_price['priceLevelPrices'];
       foreach ($priceLevelPrices as $priceLevelPrice) {
         $priceLevel = $priceLevelPrice['priceLevel'];
@@ -1128,6 +1175,12 @@ class ProductImporter {
             // Set $minQuantity to 1 if value from the API is 0.
             $minQuantity = $priceBreak['minQuantity'] != 0 ? $priceBreak['minQuantity'] : 1;
             $unitPrice = $priceBreak['unitPrice'];
+            if ($unitPrice === NULL) {
+              $this->logger->error(t('Product Importer Error - SyncDB ID: @sync_db_id. Price List for level "@level" does not have unit price set.', [
+                '@sync_db_id' => $product_from_response['productId'],
+                '@level' => $priceLevel['priceLevel'],
+              ]));
+            }
             if ($priceLevel['priceLevel'] == 'Non-Member' && $minQuantity == 1) {
               $variation->setPrice(new Price($unitPrice, 'USD'));
               $variation->save();
@@ -1136,9 +1189,23 @@ class ProductImporter {
               $price_list_item = $this->updatePriceListItem($price_list->id(), $variation->id(), $minQuantity, $unitPrice);
               $price_list_item->save();
             }
+            switch ($priceLevel['priceLevel']) {
+              case 'Non-Member':
+                $has_nonmember_price = TRUE;
+                break;
+
+              case 'Member':
+                $has_member_price = TRUE;
+                break;
+
+              case 'Distributor':
+                $has_distributor_price = TRUE;
+                break;
+            }
           }
         }
       }
+      $this->generatePriceListsLogMessages($product_from_response, $has_nonmember_price, $has_member_price, $has_distributor_price);
     }
   }
 
@@ -1212,15 +1279,15 @@ class ProductImporter {
   protected function setLaterRevisionField(Product &$product, array $product_from_response) {
     if ($product_from_response['laterRevision']['productId'] != $product_from_response['productId']) {
       $this->importProduct($product_from_response['laterRevision']['productId']);
-    }
-    $storage = $this->entityTypeManager->getStorage('commerce_product_variation');
-    $variations = $storage->loadByProperties([
-      'syncdb_id' => $product_from_response['laterRevision']['productId'],
-    ]);
-    if ($variations) {
-      $variation = reset($variations);
-      $product->set('later_revision', ['target_id' => $variation->id()]);
-      $product->save();
+      $storage = $this->entityTypeManager->getStorage('commerce_product_variation');
+      $variations = $storage->loadByProperties([
+        'syncdb_id' => $product_from_response['laterRevision']['productId'],
+      ]);
+      if ($variations) {
+        $variation = reset($variations);
+        $product->set('later_revision', ['target_id' => $variation->getProductId()]);
+        $product->save();
+      }
     }
   }
 
@@ -1263,16 +1330,17 @@ class ProductImporter {
    *   Whether or not the product is newly-created by current import process.
    */
   protected function isProductVariationPublished(ProductVariation &$variation, array $product_from_response, bool $newly_created) {
-    $display_in_website = $product_from_response['displayInWebsite'];
     $inactive = $product_from_response['inActive'];
+    $display_in_website = $product_from_response['displayInWebsite'];
+    $discontinued_item = $product_from_response['discontinuedItem'];
     // 'Inactive' = Yes or 'Display in Web Site' = No => 'Unpublished'.
-    if ($inactive || !$display_in_website) {
+    if ($inactive || !$display_in_website || $discontinued_item) {
       // This covers products that are unpublished but purchasable,
       // where 'Inactive' = No and 'Display in Web Site' = No.
       return FALSE;
     }
     // In Writing / pre-published.
-    if ($display_in_website && !$inactive) {
+    if (!$inactive && $display_in_website && !$discontinued_item) {
       if ($newly_created) {
         // Publish to Drupal is always manual.
         return FALSE;
@@ -1348,7 +1416,7 @@ class ProductImporter {
    * @param \Drupal\commerce_product\Entity\Product $target_product
    *   The target product.
    */
-  protected function deleteOrphanedVariations(array $product_from_response, Product $target_product) {
+  protected function ensureVariationIsAssignedToCorrectProduct(array $product_from_response, Product $target_product) {
     $variation_storage = $this->entityTypeManager->getStorage('commerce_product_variation');
     $variations = $variation_storage->loadByProperties([
       'syncdb_id' => $product_from_response['productId'],
@@ -1359,16 +1427,53 @@ class ProductImporter {
       $product_id = $variation->getProductId();
 
       if ($product_id != $target_product->id()) {
-        // Delete variation that exists attached to the wrong product.
-        $variation_storage->delete([$variation]);
-        // Delete orphaned product if no other variations for it exist.
-        $product_storage = $this->entityTypeManager->getStorage('commerce_product');
-        /** @var \Drupal\commerce_product\Entity\Product $product */
-        $product = $product_storage->load($product_id);
+        // Attach the variation to the right product.
+        $product = $variation->getProduct();
+        $product->removeVariation($variation);
+        $product->save();
+        $target_product->addVariation($variation);
+        $target_product->save();
+        $variation->set('product_id', $target_product->id());
+        $variation->save();
+
+        // Unpublish orphaned product if no other variations for it exist.
         if (!$product->hasVariations()) {
-          $product_storage->delete([$product]);
+          $product->set('status', FALSE);
         }
       }
+    }
+  }
+
+  /**
+   * Generate log messages for missing Price List values.
+   *
+   * @param array $product_from_response
+   *   The product data from the Api response.
+   * @param bool $has_nonmember_price
+   *   Whether the product has a Non-Member price set.
+   * @param bool $has_member_price
+   *   Whether the product has a Member price set.
+   * @param bool $has_distributor_price
+   *   Whether the product has a Distributor price set.
+   */
+  protected function generatePriceListsLogMessages(array $product_from_response, bool $has_nonmember_price, bool $has_member_price, bool $has_distributor_price) {
+    if (!$has_nonmember_price) {
+      $this->logger->error(t('Product Importer Error - SyncDB ID: @sync_db_id. Price List for level "@level" does not exist.', [
+        '@sync_db_id' => $product_from_response['productId'],
+        '@level' => 'Non-Member',
+      ]));
+    }
+    if (!$has_member_price) {
+      $this->logger->error(t('Product Importer Error - SyncDB ID: @sync_db_id. Price List for level "@level" does not exist.', [
+        '@sync_db_id' => $product_from_response['productId'],
+        '@level' => 'Member',
+      ]));
+    }
+    if (!$has_distributor_price) {
+      $this->logger->error(t('Product Importer Error - SyncDB ID: @sync_db_id. Price List for level "@level" does not exist.', [
+        '@sync_db_id' => $product_from_response['productId'],
+        '@level' => 'Distributor',
+      ]));
     }
   }
 

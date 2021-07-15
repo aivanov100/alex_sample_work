@@ -1,0 +1,7 @@
+id: ipc_order_sync
+label: 'IPC Order Sync'
+backend: database
+backend_configuration: {}
+processor: cron
+processing_time: 180
+locked: true

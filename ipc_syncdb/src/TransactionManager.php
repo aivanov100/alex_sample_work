@@ -3,10 +3,10 @@
 namespace Drupal\ipc_syncdb;
 
 use Drupal\advancedqueue\Job;
+use Drupal\commerce_order\AdjustmentTransformerInterface;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_paypal\Plugin\Commerce\PaymentGateway\PayflowInterface;
 use Drupal\Component\Serialization\Json;
-use Drupal\Component\Utility\UrlHelper;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
@@ -72,11 +72,11 @@ class TransactionManager {
   protected $state;
 
   /**
-   * The api helper.
+   * The adjustment transformer.
    *
-   * @var \Drupal\ipc_syncdb\ApiHelper
+   * @var \Drupal\commerce_order\AdjustmentTransformerInterface
    */
-  protected $apiHelper;
+  protected $adjustmentTransformer;
 
   /**
    * Constructs a new TransactionSubscriber object.
@@ -93,17 +93,17 @@ class TransactionManager {
    *   Config Factory service.
    * @param \Drupal\Core\State\State $state
    *   The State service.
-   * @param \Drupal\ipc_syncdb\ApiHelper $api_helper
-   *   The api helper.
+   * @param \Drupal\commerce_order\AdjustmentTransformerInterface $adjustment_transformer
+   *   The adjustment transformer.
    */
-  public function __construct(EntityTypeManagerInterface $entity_type_manager, DateFormatterInterface $date_formatter, MessengerInterface $messenger, LoggerInterface $logger, ConfigFactoryInterface $config_factory, State $state, ApiHelper $api_helper) {
+  public function __construct(EntityTypeManagerInterface $entity_type_manager, DateFormatterInterface $date_formatter, MessengerInterface $messenger, LoggerInterface $logger, ConfigFactoryInterface $config_factory, State $state, AdjustmentTransformerInterface $adjustment_transformer) {
     $this->entityTypeManager = $entity_type_manager;
     $this->dateFormatter = $date_formatter;
     $this->messenger = $messenger;
     $this->logger = $logger;
     $this->configFactory = $config_factory;
     $this->state = $state;
-    $this->apiHelper = $api_helper;
+    $this->adjustmentTransformer = $adjustment_transformer;
   }
 
   /**
@@ -117,34 +117,19 @@ class TransactionManager {
    */
   public function postTransaction(OrderInterface $order) {
     $config = $this->configFactory->get('ipc_syncdb.settings');
-    $status = 'failed';
-
+    $status = 'failure';
     if (!$config->get('export_orders_to_syncdb')) {
-      return $status;
-    }
-    if (!$this->checkOrderTotalMatchesExpectedTotal($order)) {
       return $status;
     }
 
     $json = $this->createJsonForPostTransaction($order);
     $requestParams = new \stdClass();
-    $requestParams->logLevel = $config->get('transaction_api_log_level');
-    $error_message = '';
-
     try {
-      $response = Transaction::postTransaction($requestParams, $json);
+      $response = Transaction::postTransaction($requestParams, $json, $order->id());
       if ($response['responseInfo']['responseMessage'] == 'Success') {
         $order->set('syncdb_id', $response['transactionId']);
         $order->save();
-        $this->logger->notice($this->t('Successfully completed postTransaction API Call. Transaction ID: @id', ['@id' => $response['transactionId']]));
         $status = 'success';
-      }
-      elseif ($response['responseInfo']['responseMessage'] == 'Error') {
-        $this->logger->error($this->t('Received Error Response Message when attempting postTransaction API call to SyncDB.<br><b>Request params:</b> <pre><code>@request_params</code></pre> <b>Body:</b> <pre><code>@body</code></pre> <b>Response:</b> <pre><code>@response</code></pre>', [
-          '@request_params' => print_r($requestParams, TRUE),
-          '@body' => print_r(Json::decode($json, TRUE), TRUE),
-          '@response' => !empty($response) ? print_r($response, TRUE) : $error_message,
-        ]));
       }
     }
     catch (\Exception $e) {
@@ -155,55 +140,8 @@ class TransactionManager {
         '@responseMessage' => $error_message,
       ]));
     }
-    finally {
-      if ($config->get('log_transaction_api_calls')) {
-        $this->apiHelper->generateDetailedLogMessage('postTransaction', $requestParams, $response, $json);
-      }
-    }
 
     return $status;
-  }
-
-  /**
-   * Check whether the order total matches the expected total.
-   *
-   * @param \Drupal\commerce_order\Entity\OrderInterface $order
-   *   The order.
-   *
-   * @return bool
-   *   Result.
-   */
-  protected function checkOrderTotalMatchesExpectedTotal(OrderInterface $order) {
-    // Total = subtotal + taxTotal + shipCost + handlingCost - giftCertificate.
-    // @todo Add giftCertificate to $expected_total equation.
-    $total = Calculator::trim($order->getTotalPrice()->getNumber());
-    $subtotal = Calculator::trim($order->getSubtotalPrice()->getNumber());
-    $shipping_price = NULL;
-    foreach ($order->getAdjustments(['shipping']) as $adjustment) {
-      $shipping_price = $shipping_price ? $shipping_price->add($adjustment->getAmount()) : $adjustment->getAmount();
-    }
-    $shipping_price = empty($shipping_price) ? '0' : Calculator::trim($shipping_price->getNumber());
-    $handling_price = NULL;
-    foreach ($order->getAdjustments(['fee']) as $adjustment) {
-      $handling_price = $handling_price ? $handling_price->add($adjustment->getAmount()) : $adjustment->getAmount();
-    }
-    $handling_price = empty($handling_price) ? '0' : Calculator::trim($handling_price->getNumber());
-    $tax_total = 0;
-    foreach ($this->getLineItems($order) as $lineItem) {
-      $tax_total = Calculator::add($tax_total, $lineItem['taxAmount']);
-    }
-    $tax_total = Calculator::round($tax_total, 2);
-    $expected_total = Calculator::add(Calculator::add(Calculator::add($subtotal, $tax_total), $shipping_price), $handling_price);
-    if (Calculator::compare($total, $expected_total) != 0) {
-      $this->logger->error(t('Error with Order number: @order_id. Order total does not match expected total.', [
-        '@order_id' => $order->id(),
-      ]));
-      $this->messenger->addError(t('Error with Order number: @order_id. Order total does not match expected total.', [
-        '@order_id' => $order->id(),
-      ]));
-      return FALSE;
-    }
-    return TRUE;
   }
 
   /**
@@ -224,9 +162,7 @@ class TransactionManager {
 
     $required_fields = [
       'externalId' => $order->id(),
-      // Identifier for the type of order, e.g. Sales Order = "salesorder",
-      // Quote = "estimate", Payment = "payment".
-      'type' => 'salesorder',
+      'externalTransactionNumber' => 'CF-' . $order->getOrderNumber(),
       // Sync DB internal ID of the customer company (entity).
       'customerId' => $this->getCustomerId($order),
       // Sync DB internal ID of the end user.
@@ -251,6 +187,7 @@ class TransactionManager {
     $this->addShippingHandlingFields($required_fields, $order);
     $this->addCustomsFields($required_fields, $order);
     $this->addTaxTotalField($required_fields, $order);
+    $this->addCopyToAddressBookFields($required_fields, $order);
 
     if ($this->getPriceLevel($order) == self::DISTRIBUTOR_PRICE_LEVEL) {
       $required_fields['distributorId'] = $this->getCustomerId($order);
@@ -264,6 +201,8 @@ class TransactionManager {
       // Add fields specific to orders NOT paid by Purchase Order.
       $this->addCcPaymentFields($required_fields, $order);
     }
+
+    $this->addCustomerIsUserField($required_fields, $order);
 
     return Json::encode($required_fields);
   }
@@ -303,10 +242,14 @@ class TransactionManager {
     $shipments = $order->get('shipments')->referencedEntities();
     if ($shipments) {
       $shipment = reset($shipments);
-      $attention_to = $shipment->get('attention_to')->getValue();
-      if ($attention_to) {
-        $fields['shippingAttentionTo'] = $attention_to[0]['value'];
-      }
+
+      $shipping_method = $shipment->getShippingMethod();
+      $ns_shipping_method_id = $shipping_method->get('ns_shipping_method_id')->getValue();
+      $ns_shipping_method_id = $ns_shipping_method_id[0]['value'];
+      $fields['nsShipMethodId'] = $ns_shipping_method_id;
+
+      $shipping_account_number = $shipment->get('shipping_account_number')->getValue();
+      $fields['shippingAccount'] = $shipping_account_number[0]['value'];
     }
   }
 
@@ -319,6 +262,8 @@ class TransactionManager {
    *   The order.
    */
   protected function addPurchaseOrderFields(array &$fields, OrderInterface $order) {
+    $fields['type'] = 'purchaseorder';
+
     $payment_method_value = $order->get('payment_method')->getValue();
     $payment_method_id = $payment_method_value[0]['target_id'];
     $payment_method_storage = $this->entityTypeManager->getStorage('commerce_payment_method');
@@ -342,6 +287,7 @@ class TransactionManager {
       'purchaseOrderFileName' => $po_filename,
       'billingContactEmail' => $po_billing_email,
       'billingInstructions' => $po_additional_info,
+      'termsId' => $this->getTermsIdField($fields, $order),
     ]);
   }
 
@@ -390,6 +336,8 @@ class TransactionManager {
    * @throws \Drupal\Component\Plugin\Exception\PluginNotFoundException
    */
   protected function addCcPaymentFields(array &$fields, OrderInterface $order) {
+    $fields['type'] = 'creditcardorder';
+
     // @todo Add support for gift certificate (it will change the $cc_paid_amount).
     $cc_paid_amount = Calculator::trim($order->getTotalPrice()->getNumber());
     $fields['ccPaidAmount'] = $cc_paid_amount;
@@ -418,17 +366,90 @@ class TransactionManager {
    *   Associative array of fields.
    * @param \Drupal\commerce_order\Entity\OrderInterface $order
    *   The order.
-   *
-   * @throws \Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException
-   * @throws \Drupal\Component\Plugin\Exception\PluginNotFoundException
    */
   protected function addTaxTotalField(array &$fields, OrderInterface $order) {
-    $tax_total = 0;
-    foreach ($this->getLineItems($order) as $lineItem) {
-      $tax_total = Calculator::add($tax_total, $lineItem['taxAmount']);
+    $fields['taxTotal'] = 0;
+    $adjustments = $order->collectAdjustments(['tax']);
+    if ($adjustments) {
+      $combined_adjustments = $this->adjustmentTransformer->combineAdjustments($adjustments);
+      $combined_adjustment = reset($combined_adjustments);
+      /** @var \Drupal\commerce_price\Price $tax_amount */
+      $tax_amount = $combined_adjustment->getAmount();
+      $fields['taxTotal'] = Calculator::round($tax_amount->getNumber(), 2);
     }
-    $tax_total = Calculator::round($tax_total, 2);
-    $fields['taxTotal'] = $tax_total;
+  }
+
+  /**
+   * Add field - customerIsUser.
+   *
+   * @param array $fields
+   *   Associative array of fields.
+   * @param \Drupal\commerce_order\Entity\OrderInterface $order
+   *   The order.
+   *
+   * @throws \Drupal\Core\TypedData\Exception\MissingDataException
+   */
+  protected function addCustomerIsUserField(array &$fields, OrderInterface $order) {
+    if ($company_group = $this->getUserCompanyGroup($order)) {
+      $fields['customerIsUser'] = FALSE;
+    }
+    else {
+      $fields['customerIsUser'] = TRUE;
+    }
+  }
+
+  /**
+   * Add fields related to copy_to_address_book fields for profiles.
+   *
+   * @param array $fields
+   *   Associative array of fields.
+   * @param \Drupal\commerce_order\Entity\OrderInterface $order
+   *   The order.
+   */
+  protected function addCopyToAddressBookFields(array &$fields, OrderInterface $order) {
+    $billing_profile = $order->getBillingProfile();
+    if ($billing_profile && $billing_profile->getData('address_book_profile_id')) {
+      $fields['addBillingAddressToCustomer'] = TRUE;
+    }
+    $profiles = $order->collectProfiles();
+    if (!empty($profiles['shipping'])) {
+      $shipping_profile = $profiles['shipping'];
+      if ($shipping_profile && $shipping_profile->getData('address_book_profile_id')) {
+        $fields['addShippingAddressToCustomer'] = TRUE;
+      }
+    }
+  }
+
+  /**
+   * Compute the value for the field - termsId.
+   *
+   * @param array $fields
+   *   Associative array of fields.
+   * @param \Drupal\commerce_order\Entity\OrderInterface $order
+   *   The order.
+   *
+   * @throws \Drupal\Core\TypedData\Exception\MissingDataException
+   */
+  protected function getTermsIdField(array $fields, OrderInterface $order) {
+    if ($group = $this->getUserCompanyGroup($order)) {
+      if ($group->hasField('payment_terms') && !$group->get('payment_terms')->isEmpty()) {
+        $payment_terms = $group->get('payment_terms')->value;
+        if (substr($payment_terms, 0, 3) === 'net') {
+          $allowed_values = $group->get('payment_terms')->getFieldDefinition()->getSetting('allowed_values');
+          if ($terms_value = $allowed_values[$payment_terms]) {
+            $syncdb_terms_value = str_replace('NET', 'Net', $terms_value);
+            $requestVariables = new \stdClass();
+            $response_terms_list = Transaction::getSalesOrderTermsList($requestVariables);
+            foreach ($response_terms_list['salesOrderTermsList'] as $term_definition) {
+              if ($term_definition['salesOrderTerms'] == $syncdb_terms_value) {
+                return $term_definition['salesOrderTermsId'];
+              }
+            }
+          }
+        }
+      }
+    }
+    return '';
   }
 
   /**
@@ -538,7 +559,7 @@ class TransactionManager {
    */
   protected function getTransDate(OrderInterface $order) {
     $placed_date = $order->get('placed')->value;
-    return $this->dateFormatter->format($placed_date, 'custom', 'Y-m-d', 'UTC');
+    return $this->dateFormatter->format($placed_date, 'custom', 'Y-m-d', 'US/Central');
   }
 
   /**
@@ -555,6 +576,7 @@ class TransactionManager {
       'countryOrRegion' => 'country_code',
       'postalCode' => 'postal_code',
       'stateOrProvince' => 'administrative_area',
+      'addressee' => 'organization',
     ];
   }
 
@@ -580,6 +602,12 @@ class TransactionManager {
       $billing_address[$sync_db_field] = $address[$profile_address_field] ?? '';
     }
     $billing_address['defaultBillingAddress'] = $billing_profile->isDefault();
+
+    $phone_number = $billing_profile->get('phone_number')->getValue();
+    $billing_address['phone'] = $phone_number[0]['value'];
+
+    $address_attention_to = $billing_profile->get('address_attention_to')->getValue();
+    $billing_address['attention'] = $address_attention_to[0]['value'];
 
     return $billing_address;
   }
@@ -610,6 +638,12 @@ class TransactionManager {
       $shipping_address[$sync_db_field] = $address[$profile_address_field] ?? '';
     }
     $shipping_address['defaultShippingAddress'] = $shipping_profile->isDefault();
+
+    $phone_number = $shipping_profile->get('phone_number')->getValue();
+    $shipping_address['phone'] = $phone_number[0]['value'];
+
+    $address_attention_to = $shipping_profile->get('address_attention_to')->getValue();
+    $shipping_address['attention'] = $address_attention_to[0]['value'];
 
     return $shipping_address;
   }
@@ -658,7 +692,6 @@ class TransactionManager {
         'quantity' => (int) $item->getQuantity(),
         'rate' => Calculator::trim($item->getUnitPrice()->getNumber()),
         'amount' => Calculator::trim($item->getTotalPrice()->getNumber()),
-        'taxAmount' => empty($tax_price) ? 0 : Calculator::trim($tax_price->getNumber()),
         // Line items with IL sales tax should use a code of 6 (IL Sales Tax),
         // without tax use 1 (-Not Taxable-).
         'taxCodeId' => empty($tax_price) ? '1' : '6',
@@ -714,7 +747,7 @@ class TransactionManager {
    * @return array
    *   Associative array 'SyncDB transaction status' => 'commerce order status'.
    */
-  public static function transactionOrderStatusMapping() {
+  protected function getTransactionOrderStatusMapping() {
     return [
       'Pending Approval' => 'pending',
       'Pending Billing' => 'pending',
@@ -728,93 +761,198 @@ class TransactionManager {
   }
 
   /**
-   * Makes GetTransactionList call to SyncDB.
-   *
-   * @param array $params
-   *   Array of params.
-   *
-   * @return array
-   *   Result.
+   * Query SyncDB for all orders that have been updated since last run.
    *
    * @throws \GuzzleHttp\Exception\GuzzleException
    */
-  public function getTransactionList(array $params = []) {
-    $url = Api::getApiEndpoint('IPCTransactionAPI') . "/transaction/GetTransactionList";
-    if (!empty($params)) {
-      $url .= '?' . UrlHelper::buildQuery($params);
-    }
-    return Api::connectApi('GET', $url);
-  }
-
-  /**
-   * Saves time when transactions where requested for imported.
-   *
-   * @param string $transaction_type
-   *   Transaction type e.g. 'salesorder'.
-   */
-  public function setLastSyncDbTransactionImport(string $transaction_type = 'salesorder') {
-    $this->state->set('last_syncdb_transaction_' . $transaction_type . '_import', time());
-  }
-
-  /**
-   * Returns time when transactions where requested for imported.
-   *
-   * @param string $transaction_type
-   *   Transaction type e.g. 'salesorder'.
-   *
-   * @return string|null
-   *   Time or NULL.
-   */
-  public function getLastSyncDbTransactionImport(string $transaction_type = 'salesorder') {
-    return $this->state->get('last_syncdb_transaction_' . $transaction_type . '_import');
-  }
-
-  /**
-   * Add transactions to queue for updating orders.
-   */
-  public function enqueueTransactionsToUpdateOrders() {
+  public function getUpdatedTransactionIdsFromSyncDb($modified_on_after = '') {
     $config = $this->configFactory->get('ipc_syncdb.settings');
     if (!$config->get('import_orders_from_syncdb')) {
       return;
     }
-    $params = [
-      'requestedPage' => 0,
-    ];
-    $last_syncdb_transaction_import = $this->getLastSyncDbTransactionImport();
-    if (!empty($last_syncdb_transaction_import)) {
-      $params['modifiedOnAfter'] = $this->dateFormatter->format($last_syncdb_transaction_import, 'custom', "Y-m-d\TH:i:s", 'UTC');
-    }
-    $transactions = $this->getTransactionList($params);
-    while (!empty($transactions['transactionList'])) {
-      $this->setLastSyncDbTransactionImport();
-      foreach ($transactions['transactionList'] as $transaction) {
-        if ($transaction['transactionType']['transactionPostType'] === 'salesorder' && is_numeric($transaction['externalId'])) {
-          $this->enqueueTransactionForOrderUpdate($transaction['externalId'], $transaction['transactionId']);
-        }
-      }
-      $params['requestedPage']++;
+    $run_time = date('Y-m-d\TH:i:s');
+    $orders_to_update = [];
 
-      $transactions = $this->getTransactionList($params);
+    $requestVariables = new \stdClass();
+    $requestedPage = 1;
+    $requestVariables->requestedPage = $requestedPage;
+    if ($modified_on_after) {
+      $modifiedOnAfter = $modified_on_after;
+    }
+    else {
+      $last_run_time = $this->state->get('ipcsync_order_sync_last_run');
+      $modifiedOnAfter = $last_run_time ? $last_run_time : ApiHelper::POLLING_ROUTINE_START_TIME;
+    }
+    $requestVariables->modifiedOnAfter = $modifiedOnAfter;
+
+    $transactions = Transaction::getTransactionList($requestVariables);
+    while (!empty($transactions['transactionList'])) {
+      foreach ($transactions['transactionList'] as $transaction) {
+        $orders_to_update[] = [
+          'order_id' => $transaction['externalId'],
+          'transaction_id' => $transaction['transactionId'],
+        ];
+      }
+      $requestedPage++;
+      $requestVariables->requestedPage = $requestedPage;
+      $transactions = Transaction::getTransactionList($requestVariables);
+    }
+
+    $this->state->set('ipcsync_order_sync_last_run', $run_time);
+    return $orders_to_update;
+  }
+
+  /**
+   * Poll for changes to orders in the Sync DB via IPCTransactionAPI.
+   */
+  public function pollForChangesToOrders($modified_on_after = '') {
+    $queue_storage = $this->entityTypeManager->getStorage('advancedqueue_queue');
+    /** @var \Drupal\advancedqueue\Entity\QueueInterface $queue */
+    $queue = $queue_storage->load('ipc_order_sync');
+
+    $orders_to_update = $this->getUpdatedTransactionIdsFromSyncDb($modified_on_after);
+    foreach ($orders_to_update as $order) {
+      $order_sync_job = Job::create('ipc_syncdb_order_get_transaction', [
+        'order_id' => $order['order_id'],
+        'transaction_id' => $order['transaction_id'],
+      ]);
+      $queue->enqueueJob($order_sync_job);
     }
   }
 
   /**
-   * Enqueue transaction to update and order on the site.
+   * Process update for an order that has been modified in SyncDB.
    *
-   * @param string $external_id
-   *   Value of 'externalId' field from SynDB transaction. Equal to order's ID.
-   * @param string $transaction_id
-   *   Value of the 'transactionId' field  from SynDB transaction.
+   * @param int $order_id
+   *   The order ID.
+   * @param int $transaction_id
+   *   The SyncDB transaction ID.
+   *
+   * @return string
+   *   The processing status, i.e. 'success' or 'failure'.
    */
-  public function enqueueTransactionForOrderUpdate($external_id, $transaction_id) {
-    $order_sync_job = Job::create('ipc_syncdb_order_get_transaction', [
-      'order_id' => $external_id,
-      'transaction_id' => $transaction_id,
-    ]);
-    $queue_storage = $this->entityTypeManager->getStorage('advancedqueue_queue');
-    /** @var \Drupal\advancedqueue\Entity\QueueInterface $queue */
-    $queue = $queue_storage->load('ipc_syncdb');
-    $queue->enqueueJob($order_sync_job);
+  public function processUpdateForOrder($order_id, $transaction_id) {
+    /** @var \Drupal\commerce_order\Entity\OrderInterface $order */
+    $order = $this->entityTypeManager->getStorage('commerce_order')->load($order_id);
+    if (!$order instanceof OrderInterface) {
+      // Order with such ID was not found. We are skipping this transaction.
+      return 'success';
+    }
+    try {
+      $requestVariables = new \stdClass();
+      $requestVariables->transactionId = $transaction_id;
+      $result = Transaction::getTransaction($requestVariables);
+      if (empty($result['responseInfo']) || $result['responseInfo']['responseMessage'] != 'Success' || empty($result['transaction']) || !is_numeric($result['transaction']['externalId'])) {
+        return 'failure';
+      }
+
+      $transaction = $result['transaction'];
+      $this->updateTransactionState($order, $transaction);
+
+      return 'success';
+    }
+    catch (\Exception $exception) {
+      $this->logger->error($this->t('Encountered exception when attempting to update order with Order ID: @order_id. Message: @message.', [
+        '@order_id' => $order_id,
+        '@message' => $exception->getMessage(),
+      ]));
+      return 'failure';
+    }
+  }
+
+  /**
+   * Updates state of transactions where requested for imported.
+   *
+   * @param \Drupal\commerce_order\Entity\OrderInterface $order
+   *   The order.
+   * @param array $transaction
+   *   Transaction data from the API.
+   */
+  protected function updateTransactionState(OrderInterface $order, array $transaction) {
+    $transaction_status_id = $transaction['transactionStatus']['transactionStatusId'];
+    $order->set('netsuite_status', $transaction_status_id);
+    $current_order_state = $order->getState()->getId();
+
+    switch ($transaction_status_id) {
+      // Orders updating the NetSuite status to 24 or 29 (Pending Approval or
+      // Pending Billing) transition to the Pending state if not already in it.
+      case 24:
+      case 29:
+        if ($current_order_state == 'draft') {
+          // Transition to the Pending state.
+          $transition_id = 'place';
+          $order->getState()->applyTransitionById($transition_id);
+          $this->logger->notice($this->t('Order Sync:: (Order ID) @order_id - Transitioning to Pending state.', [
+            '@order_id' => $order->id(),
+          ]));
+        }
+        elseif ($current_order_state != 'pending') {
+          $this->logger->error($this->t('Invalid state transition. Order ID @order_id cannot transition to Pending state, as it is not currently in Draft state.', [
+            '@order_id' => $order->id(),
+          ]));
+        }
+        break;
+
+      // Orders updating the NetSuite status to 25, 27, or 28 (Pending
+      // Fulfillment, Partially Fulfilled, or Pending Billing/Partially
+      // Fulfilled) transition to the Fulfillment state if not already in it.
+      case 25:
+      case 27:
+      case 28:
+        if ($current_order_state == 'draft' || $current_order_state == 'pending') {
+          // Transition to the Fulfillment state.
+          $transition_id = 'validate';
+          $order->getState()->applyTransitionById($transition_id);
+          $this->logger->notice($this->t('Order Sync:: (Order ID) @order_id - Transitioning to Fulfillment state.', [
+            '@order_id' => $order->id(),
+          ]));
+        }
+        elseif ($current_order_state != 'fulfillment') {
+          // Create a watchdog warning if the current state is not Pending.
+          $this->logger->error($this->t('Invalid state transition. Order ID @order_id cannot transition to Fulfillment state, as it is not currently in Draft or Pending state.', [
+            '@order_id' => $order->id(),
+          ]));
+        }
+        break;
+
+      // Orders updating the NetSuite status to 30 (Billed) transition to the
+      // Completed state.
+      case 30:
+        if ($current_order_state == 'fulfillment') {
+          // Transition to the Completed state.
+          $transition_id = 'fulfill';
+          $order->getState()->applyTransitionById($transition_id);
+          $this->logger->notice($this->t('Order Sync:: (Order ID) @order_id - Transitioning to Completed state.', [
+            '@order_id' => $order->id(),
+          ]));
+        }
+        if ($current_order_state == 'draft' || $current_order_state == 'pending') {
+          // Transition to the Fulfillment state.
+          $transition_id = 'validate';
+          $order->getState()->applyTransitionById($transition_id);
+          $this->logger->notice($this->t('Order Sync:: (Order ID) @order_id - Transitioning to Fulfillment state.', [
+            '@order_id' => $order->id(),
+          ]));
+          // Transition to the Completed state.
+          $transition_id = 'fulfill';
+          $order->getState()->applyTransitionById($transition_id);
+          $this->logger->notice($this->t('Order Sync:: (Order ID) @order_id - Transitioning to Completed state.', [
+            '@order_id' => $order->id(),
+          ]));
+        }
+        break;
+
+      case 26:
+      case 31:
+        // Transition to the Canceled state.
+        $transition_id = 'cancel';
+        $order->getState()->applyTransitionById($transition_id);
+        $this->logger->notice($this->t('Order Sync:: (Order ID) @order_id - Transitioning to Canceled state.', [
+          '@order_id' => $order->id(),
+        ]));
+        break;
+    }
+    $order->save();
   }
 
 }

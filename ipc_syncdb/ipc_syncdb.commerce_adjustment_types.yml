@@ -1,0 +1,6 @@
+handling_fee:
+  label: 'Handling fee'
+  singular_label: 'handling fee'
+  plural_label: 'handling fees'
+  has_ui: true
+  weight: 90

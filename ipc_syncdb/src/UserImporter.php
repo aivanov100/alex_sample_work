@@ -11,6 +11,7 @@ use Drupal\profile\Entity\Profile;
 use Drupal\Core\State\StateInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\advancedqueue\Job;
+use Drupal\commerce_cart\CartProviderInterface;
 
 /**
  * Imports products from Sync DB via IPCTransactionApi.
@@ -60,11 +61,11 @@ class UserImporter {
   protected $configFactory;
 
   /**
-   * The api helper.
+   * The cart provider.
    *
-   * @var \Drupal\ipc_syncdb\ApiHelper
+   * @var \Drupal\commerce_cart\CartProviderInterface
    */
-  protected $apiHelper;
+  protected $cartProvider;
 
   /**
    * Constructs a new UserImporter object.
@@ -81,17 +82,17 @@ class UserImporter {
    *   The state.
    * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
    *   The configuration factory.
-   * @param \Drupal\ipc_syncdb\ApiHelper $api_helper
-   *   The api helper.
+   * @param \Drupal\commerce_cart\CartProviderInterface $cart_provider
+   *   The cart provider.
    */
-  public function __construct(EntityTypeManagerInterface $entity_type_manager, MessengerInterface $messenger, LoggerInterface $logger, CompanyImporter $company_importer, StateInterface $state, ConfigFactoryInterface $config_factory, ApiHelper $api_helper) {
+  public function __construct(EntityTypeManagerInterface $entity_type_manager, MessengerInterface $messenger, LoggerInterface $logger, CompanyImporter $company_importer, StateInterface $state, ConfigFactoryInterface $config_factory, CartProviderInterface $cart_provider) {
     $this->entityTypeManager = $entity_type_manager;
     $this->messenger = $messenger;
     $this->logger = $logger;
     $this->companyImporter = $company_importer;
     $this->state = $state;
     $this->configFactory = $config_factory;
-    $this->apiHelper = $api_helper;
+    $this->cartProvider = $cart_provider;
   }
 
   /**
@@ -99,24 +100,59 @@ class UserImporter {
    *
    * @param int $sync_db_id
    *   The SyncDB ID of the user.
+   *
+   * @return \Drupal\user\UserInterface|false
+   *   The imported user.
    */
   public function importUser($sync_db_id) {
     $requestVariables = new \stdClass();
     $requestVariables->userId = $sync_db_id;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('entities_api_log_level');
     $response_user = UserSync::getUser($requestVariables);
-    $this->apiHelper->processApiResponse($response_user, 'getUser', 'userId', $requestVariables->userId);
-    if ($config->get('log_entities_api_calls')) {
-      $this->apiHelper->generateDetailedLogMessage('getUser', $requestVariables, $response_user);
+    if ($response_user['user']) {
+      $user = $this->importDataForUser($response_user['user']);
+      return $user;
     }
-    $user = $this->createOrLoadUser($response_user['user']);
+    return FALSE;
+  }
 
-    $response_company_affiliation_list = UserSync::getUserCompanyAffiliationListByUserId($requestVariables);
-    $this->apiHelper->processApiResponse($response_company_affiliation_list, 'getUserCompanyAffiliationListByUserId', 'userId', $sync_db_id);
-    if ($config->get('log_entities_api_calls')) {
-      $this->apiHelper->generateDetailedLogMessage('getUserCompanyAffiliationListByUserId', $requestVariables, $response_company_affiliation_list);
+  /**
+   * Imports user with the corresponding email via IPCEntitiesAPI.
+   *
+   * @param string $user_email
+   *   The email of the user.
+   *
+   * @return \Drupal\user\UserInterface|false
+   *   The imported user.
+   *
+   * @throws \GuzzleHttp\Exception\GuzzleException
+   */
+  public function importUserByEmail($user_email) {
+    $requestVariables = new \stdClass();
+    $requestVariables->email = $user_email;
+    $response_user = UserSync::getUserByEmail($requestVariables);
+    if ($response_user['user']) {
+      $user = $this->importDataForUser($response_user['user']);
+      return $user;
     }
+    return FALSE;
+  }
+
+  /**
+   * Imports data for the given user.
+   *
+   * @param array $user_from_response
+   *   The product data from the Api response.
+   *
+   * @return \Drupal\user\UserInterface|false
+   *   The imported user.
+   */
+  protected function importDataForUser(array $user_from_response) {
+    $user = $this->createOrLoadUser($user_from_response);
+    $requestVariables = new \stdClass();
+    $requestVariables->userId = $user_from_response['userId'];
+    $response_company_affiliation_list = UserSync::getUserCompanyAffiliationListByUserId($requestVariables);
+    $this->removeStrayCompanyRelationships($user, $user_from_response);
+
     $userCompanyAffiliationList = $response_company_affiliation_list['userCompanyAffiliationList'];
     foreach ($userCompanyAffiliationList as $record) {
       $company = $this->companyImporter->createOrUpdateCompany($record['company']);
@@ -128,44 +164,10 @@ class UserImporter {
       ]));
     }
 
-    $this->setUserFields($user, $response_user['user']);
+    $this->setUserFields($user, $user_from_response);
     $this->displayUserImportSuccessMessage($user);
-  }
 
-  /**
-   * Imports user with the corresponding email via IPCEntitiesAPI.
-   *
-   * @param string $user_email
-   *   The email of the user.
-   */
-  public function importUserByEmail($user_email) {
-    $requestVariables = new \stdClass();
-    $requestVariables->email = $user_email;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('entities_api_log_level');
-    $response_user = UserSync::getUserByEmail($requestVariables);
-    $this->apiHelper->processApiResponse($response_user, 'getUserByEmail', 'email', $requestVariables->email);
-    if ($config->get('log_entities_api_calls')) {
-      $this->apiHelper->generateDetailedLogMessage('getUserByEmail', $requestVariables, $response_user);
-    }
-    if ($response_user['user']) {
-      $user = $this->createOrLoadUser($response_user['user']);
-      $requestVariables2 = new \stdClass();
-      $requestVariables2->userId = $response_user['user']['userId'];
-      $response_company_affiliation_list = UserSync::getUserCompanyAffiliationListByUserId($requestVariables2);
-      $this->apiHelper->processApiResponse($response_company_affiliation_list, 'getUserCompanyAffiliationListByUserId', 'userId', $requestVariables2->userId);
-      if ($config->get('log_entities_api_calls')) {
-        $this->apiHelper->generateDetailedLogMessage('getUserCompanyAffiliationListByUserId', $requestVariables2, $response_company_affiliation_list);
-      }
-      $userCompanyAffiliationList = $response_company_affiliation_list['userCompanyAffiliationList'];
-      foreach ($userCompanyAffiliationList as $record) {
-        $company = $this->companyImporter->createOrUpdateCompany($record['company']);
-        $values = ['group_roles' => ['target_id' => 'company-contact']];
-        $company->addMember($user, $values);
-      }
-      $this->setUserFields($user, $response_user['user']);
-      $this->displayUserImportSuccessMessage($user);
-    }
+    return $user;
   }
 
   /**
@@ -174,7 +176,7 @@ class UserImporter {
    * @param array $user_from_response
    *   The user from the Api response.
    *
-   * @return Drupal\user\Entity\User
+   * @return \Drupal\user\UserInterface
    *   The user.
    */
   public function createOrLoadUser(array $user_from_response) {
@@ -184,6 +186,7 @@ class UserImporter {
         'name' => $user_from_response['email'],
         'mail' => $user_from_response['email'],
       ]);
+      $user->activate();
       $user->save();
     }
     return $user;
@@ -267,13 +270,7 @@ class UserImporter {
   protected function updateCustomerProfiles(User &$user, array $user_from_response) {
     $requestVariables = new \stdClass();
     $requestVariables->userId = $user_from_response['userId'];
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('entities_api_log_level');
     $response_address_list = UserSync::getUserAddressList($requestVariables);
-    $this->apiHelper->processApiResponse($response_address_list, 'getUserAddressList', 'userId', $requestVariables->userId);
-    if ($config->get('log_entities_api_calls')) {
-      $this->apiHelper->generateDetailedLogMessage('getUserAddressList', $requestVariables, $response_address_list);
-    }
     foreach ($response_address_list['addressList'] as $address_from_response) {
       $profile = $this->updateProfile($user->id(), $address_from_response);
     }
@@ -321,6 +318,7 @@ class UserImporter {
       'locality' => $address_from_response['city'],
       'administrative_area' => $address_from_response['stateOrProvince'],
       'postal_code' => $address_from_response['postalCode'],
+      'organization' => $address_from_response['addressee'],
     ];
     $profile->set('address', $address);
     if ($address_from_response['primaryAddress'] == TRUE) {
@@ -331,6 +329,8 @@ class UserImporter {
     $profile->set('default_shipping_address', $address_from_response['defaultShippingAddress']);
     $profile->set('home_address', $address_from_response['homeAddress']);
     $profile->set('residential_address', $address_from_response['residentialAddress']);
+    $profile->set('phone_number', $address_from_response['phone']);
+    $profile->set('address_attention_to', $address_from_response['attention']);
     $profile->save();
   }
 
@@ -364,7 +364,7 @@ class UserImporter {
    */
   protected function displayUserImportSuccessMessage(User $user) {
     $account = \Drupal::currentUser();
-    if ($account->hasPermission('administer ipc_syncdb')) {
+    if ($account->hasPermission('administer ipcsync')) {
       $this->messenger->addMessage(t('User imported successfully: <a href=":url">:username</a>', [
         ':url' => $user->toUrl()->toString(),
         ':username' => $user->getUsername(),
@@ -398,26 +398,22 @@ class UserImporter {
   protected function getUpdatedUserIdsFromSyncDb() {
     $run_time = date('Y-m-d\TH:i:s');
     $all_ids = [];
+
     $requestVariables = new \stdClass();
     $requestedPage = 1;
     $requestVariables->requestedPage = $requestedPage;
     $last_run_time = $this->state->get('ipcsync_user_importer_last_run');
-    $modifiedOnAfter = $last_run_time ? $last_run_time : $run_time;
+    $modifiedOnAfter = $last_run_time ? $last_run_time : ApiHelper::POLLING_ROUTINE_START_TIME;
     $requestVariables->modifiedOnAfter = $modifiedOnAfter;
-    $config = $this->configFactory->get('ipc_syncdb.settings');
-    $requestVariables->logLevel = $config->get('entities_api_log_level');
-    $response = UserSync::getUserList($requestVariables);
-    $this->apiHelper->processApiResponse($response, 'getUserList', 'modifiedOnAfter', $modifiedOnAfter);
-    $response_list = $response['userList'];
 
+    $response = UserSync::getUserList($requestVariables);
+    $response_list = $response['userList'];
     while ($response_list) {
       $ids = array_column($response_list, 'userId');
       $all_ids = array_merge($all_ids, $ids);
       $requestedPage++;
       $requestVariables->requestedPage = $requestedPage;
-      $requestVariables->modifiedOnAfter = $modifiedOnAfter;
       $response = UserSync::getUserList($requestVariables);
-      $this->apiHelper->processApiResponse($response, 'getUserList', 'modifiedOnAfter', $modifiedOnAfter);
       $response_list = $response['userList'];
     }
 
@@ -433,6 +429,41 @@ class UserImporter {
     }
     $this->state->set('ipcsync_user_importer_last_run', $run_time);
     return $all_ids_filtered;
+  }
+
+  /**
+   * Remove old company relationship if a user's primary_company changes.
+   *
+   * @param Drupal\user\Entity\User $user
+   *   The user.
+   * @param array $user_from_response
+   *   The user from the Api response.
+   *
+   * @throws \Drupal\Core\Entity\EntityStorageException
+   */
+  protected function removeStrayCompanyRelationships(User &$user, array $user_from_response) {
+    $primary_company = $user->get('primary_company')->getValue();
+    if (!empty($primary_company[0]['target_id'])) {
+      $primary_company_id = $primary_company[0]['target_id'];
+      /** @var Drupal\group\Entity\Group $company */
+      $company = $this->entityTypeManager->getStorage('group')->load($primary_company_id);
+      if (!$company->get('syncdb_account_number')->isEmpty()) {
+        $syncdb_account_number = $company->get('syncdb_account_number')->value;
+
+        // Check if the stored primary company matches that from API response.
+        if ((int) $syncdb_account_number !== (int) $user_from_response['accountId']) {
+          // Remove association with old company.
+          $company->removeMember($user);
+          $company->save();
+          // Purge shopping carts for this user.
+          /** @var \Drupal\commerce_order\Entity\OrderInterface[] $carts */
+          $carts = $this->cartProvider->getCarts($user);
+          foreach ($carts as $cart) {
+            $cart->delete();
+          }
+        }
+      }
+    }
   }
 
 }
