@@ -30,7 +30,7 @@ ipc_syncdb.user_import_form:
     _form: '\Drupal\ipc_syncdb\Form\UserImportForm'
     _title: 'Perform User Import'
   requirements:
-    _permission: 'import ipcsync user'
+    _permission: 'administer ipcsync'
 
 ipc_syncdb.company_import_form:
   path: '/admin/commerce/sync-db/import-company'
@@ -40,10 +40,10 @@ ipc_syncdb.company_import_form:
   requirements:
     _permission: 'administer ipcsync'
 
-ipc_syncdb.license_import_form:
-  path: '/admin/commerce/sync-db/import-license'
+ipc_syncdb.alexdebug:
+  path: '/alexdebug'
   defaults:
-    _form: '\Drupal\ipc_syncdb\Form\LicenseImportForm'
-    _title: 'Perform License Import'
+    _controller: '\Drupal\ipc_syncdb\Controller\CustomController::alexdebug'
+    _title: 'Alex Debug'
   requirements:
     _permission: 'administer ipcsync'

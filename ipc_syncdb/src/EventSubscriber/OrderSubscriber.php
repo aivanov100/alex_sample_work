@@ -52,12 +52,16 @@ class OrderSubscriber implements EventSubscriberInterface {
         'enqueueOrderToSendTransaction',
         -200,
       ],
+      'commerce_invoice.confirm.post_transition' => [
+        'enqueueInvoiceToSendTransaction',
+        -200,
+      ],
     ];
     return $events;
   }
 
   /**
-   * Does a postTransaction API call to IPC Transaction Api.
+   * Creates a job for an order in the IPC Transaction Sync queue.
    *
    * @param \Drupal\state_machine\Event\WorkflowTransitionEvent $event
    *   The event we subscribed to.
@@ -78,6 +82,42 @@ class OrderSubscriber implements EventSubscriberInterface {
     /** @var \Drupal\advancedqueue\Entity\QueueInterface $queue */
     $queue = $queue_storage->load('ipc_transaction_sync');
     $queue->enqueueJob($order_sync_job);
+  }
+
+  /**
+   * Creates a job for a quote invoice in the IPC Transaction Sync queue.
+   *
+   * @param \Drupal\state_machine\Event\WorkflowTransitionEvent $event
+   *   The event we subscribed to.
+   *
+   * @throws \Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException
+   * @throws \Drupal\Component\Plugin\Exception\PluginNotFoundException
+   */
+  public function enqueueInvoiceToSendTransaction(WorkflowTransitionEvent $event) {
+    $config = $this->configFactory->get('ipc_syncdb.settings');
+    if (!$config->get('export_orders_to_syncdb')) {
+      return;
+    }
+    /** @var \Drupal\commerce_invoice\Entity\Invoice $invoice */
+    $invoice = $event->getEntity();
+    /** @var \Drupal\commerce_order\Entity\OrderInterface[] $orders */
+    $orders = $invoice->getOrders();
+
+    if ($orders) {
+      $order = reset($orders);
+      $order_state = $order->getState()->getId();
+
+      if ($invoice->bundle() == 'quote' && $order_state == 'quoted') {
+        $invoice_sync_job = Job::create('ipc_syncdb_order_post_transaction', [
+          'invoice_id' => $invoice->id(),
+        ]);
+
+        $queue_storage = $this->entityTypeManager->getStorage('advancedqueue_queue');
+        /** @var \Drupal\advancedqueue\Entity\QueueInterface $queue */
+        $queue = $queue_storage->load('ipc_transaction_sync');
+        $queue->enqueueJob($invoice_sync_job);
+      }
+    }
   }
 
 }

@@ -6,19 +6,19 @@ use Drupal\advancedqueue\Job;
 use Drupal\advancedqueue\JobResult;
 use Drupal\advancedqueue\Plugin\AdvancedQueue\JobType\JobTypeBase;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
-use Drupal\ipc_syncdb\UserImporter;
+use Drupal\ipc_syncdb\LicenseImporter;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 
 /**
- * Provides the job type for importing user data from Sync DB.
+ * Provides the job type for importing download license data from Sync DB.
  *
  * @AdvancedQueueJobType(
- *   id = "syncdb_user_sync",
- *   label = @Translation("Sync DB User Sync"),
+ *   id = "syncdb_license_sync",
+ *   label = @Translation("Sync DB License Sync"),
  * )
  */
-class SyncDbUserSync extends JobTypeBase implements ContainerFactoryPluginInterface {
+class SyncDbLicenseSync extends JobTypeBase implements ContainerFactoryPluginInterface {
 
   /**
    * The entity type manager.
@@ -28,14 +28,14 @@ class SyncDbUserSync extends JobTypeBase implements ContainerFactoryPluginInterf
   public $entityTypeManager;
 
   /**
-   * The user importer.
+   * The license importer.
    *
-   * @var \Drupal\ipc_syncdb\UserImporter
+   * @var \Drupal\ipc_syncdb\LicenseImporter
    */
-  protected $userImporter;
+  protected $licenseImporter;
 
   /**
-   * Constructs a new SyncDbUserSync object.
+   * Constructs a new SyncDbLicenseSync object.
    *
    * @param array $configuration
    *   A configuration array containing information about the plugin instance.
@@ -45,14 +45,14 @@ class SyncDbUserSync extends JobTypeBase implements ContainerFactoryPluginInterf
    *   The plugin implementation definition.
    * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
    *   The entity query factory.
-   * @param \Drupal\ipc_syncdb\UserImporter $user_importer
-   *   The user importer.
+   * @param \Drupal\ipc_syncdb\LicenseImporter $license_importer
+   *   The license importer.
    */
-  public function __construct(array $configuration, $plugin_id, $plugin_definition, EntityTypeManagerInterface $entity_type_manager, UserImporter $user_importer) {
+  public function __construct(array $configuration, $plugin_id, $plugin_definition, EntityTypeManagerInterface $entity_type_manager, LicenseImporter $license_importer) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
 
     $this->entityTypeManager = $entity_type_manager;
-    $this->userImporter = $user_importer;
+    $this->licenseImporter = $license_importer;
   }
 
   /**
@@ -64,32 +64,18 @@ class SyncDbUserSync extends JobTypeBase implements ContainerFactoryPluginInterf
       $plugin_id,
       $plugin_definition,
       $container->get('entity_type.manager'),
-      $container->get('ipc_syncdb.user_importer')
+      $container->get('ipc_syncdb.license_importer')
     );
   }
 
   /**
    * {@inheritdoc}
+   *
+   * @throws \GuzzleHttp\Exception\GuzzleException
    */
   public function process(Job $job) {
-    $user_storage = $this->entityTypeManager->getStorage('user');
-
     $payload = $job->getPayload();
-    if (isset($payload['user_id']) && $user_id = $payload['user_id']) {
-      // Import user by User ID.
-      $this->userImporter->importUser($user_id);
-      if (!$user_storage->loadByProperties(['syncdb_id' => $user_id])) {
-        return JobResult::failure('User not saved correctly.', 31, 86400);
-      }
-    }
-    elseif (isset($payload['user_email']) && $user_email = $payload['user_email']) {
-      // Import user by email.
-      $this->userImporter->importUserByEmail($user_email);
-      if (!$user_storage->loadByProperties(['mail' => $user_email])) {
-        return JobResult::failure('User not saved correctly.', 31, 86400);
-      }
-    }
-
+    $this->licenseImporter->importDigitalDownloadTransaction($payload['transaction_id']);
     return JobResult::success();
   }
 

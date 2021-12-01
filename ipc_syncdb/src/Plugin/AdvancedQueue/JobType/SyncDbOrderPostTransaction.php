@@ -121,15 +121,37 @@ class SyncDbOrderPostTransaction extends JobTypeBase implements ContainerFactory
    * {@inheritdoc}
    */
   public function process(Job $job) {
-    $order_id = $job->getPayload()['order_id'];
-    $order = $this->entityTypeManager->getStorage('commerce_order')->load($order_id);
-    if (!$order instanceof OrderInterface) {
-      return JobResult::failure('Order was not found.');
-    }
     try {
-      $result = $this->transactionManager->postTransaction($order);
+      $payload = $job->getPayload();
+      if (isset($payload['invoice_id']) && $invoice_id = $payload['invoice_id']) {
+        // Prepare to send Post Transaction for Quote.
+        /** @var \Drupal\commerce_invoice_payment\Entity\Invoice $invoice */
+        $invoice = $this->entityTypeManager->getStorage('commerce_invoice')->load($invoice_id);
+        /** @var \Drupal\commerce_order\Entity\OrderInterface[] $orders */
+        $orders = $invoice->getOrders();
+        if ($orders) {
+          $order = reset($orders);
+        }
+      }
+      elseif (isset($payload['order_id']) && $order_id = $payload['order_id']) {
+        // Prepare to send Post Transaction for Order.
+        /** @var \Drupal\commerce_order\Entity\OrderInterface $order */
+        $order = $this->entityTypeManager->getStorage('commerce_order')->load($order_id);
+        $invoice = NULL;
+      }
+
+      if (!$order instanceof OrderInterface) {
+        return JobResult::failure('Unable to load Order for transaction.');
+      }
+
+      // Perform Post Transaction API call.
+      $result = $this->transactionManager->postTransaction($order, $invoice);
       if ($result === 'success') {
         return JobResult::success();
+      }
+      elseif ($result === 'skipped') {
+        // If the result of postTransaction is 'skipped', try again in 15 mins.
+        return JobResult::failure('Post Transaction skipped for order', 31, 900);
       }
       // Consider all other statuses a failure.
       return JobResult::failure('Order was not synced', 31, 86400);

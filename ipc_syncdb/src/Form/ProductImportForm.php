@@ -9,14 +9,14 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 
 /**
- * Contains a form for switching the view mode of a node during preview.
+ * A form for Product Importer operations.
  *
  * @internal
  */
 class ProductImportForm extends FormBase implements ContainerInjectionInterface {
 
   /**
-   * The inline form manager.
+   * The product importer.
    *
    * @var \Drupal\ipc_syncdb\ProductImporter
    */

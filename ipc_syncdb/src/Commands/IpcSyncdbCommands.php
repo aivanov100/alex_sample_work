@@ -173,4 +173,14 @@ class IpcSyncdbCommands extends DrushCommands {
     \Drupal::service('ipc_syncdb.transaction_manager')->postTransaction($order);
   }
 
+  /**
+   * Trigger License Sync polling routine.
+   *
+   * @command ipc_syncdb:license-sync:trigger-polling-routine
+   * @aliases trigger-license-sync
+   */
+  public function triggerLicenseSyncPollingRoutine() {
+    \Drupal::service('ipc_syncdb.license_importer')->pollForChangesToLicenses();
+  }
+
 }

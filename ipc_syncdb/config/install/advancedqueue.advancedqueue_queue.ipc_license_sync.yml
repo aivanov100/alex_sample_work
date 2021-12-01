@@ -1,0 +1,7 @@
+id: ipc_license_sync
+label: 'IPC License Sync'
+backend: database
+backend_configuration: {}
+processor: cron
+processing_time: 180
+locked: true

@@ -13,7 +13,7 @@ use Drupal\Core\State\StateInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 
 /**
- * Imports products from Sync DB via IPCTransactionApi.
+ * Imports companies from Sync DB via IPCEntitiesApi.
  */
 class CompanyImporter {
 
@@ -216,6 +216,8 @@ class CompanyImporter {
    *   The company.
    * @param array $company_from_response
    *   The company from the Api response.
+   *
+   * @throws \Drupal\Core\Entity\EntityStorageException
    */
   protected function setCompanyFields(Group &$company, array $company_from_response) {
     $company->setOwnerId(1);
@@ -224,10 +226,12 @@ class CompanyImporter {
     $company->set('label', $company_from_response['companyName']);
     $company->set('billing_email', $company_from_response['billingContactEmail']);
     $company->set('credit_hold', $company_from_response['creditOnHold']);
-    $company->save();
+    $company->set('customs_tax_id', $company_from_response['vatId']);
     $this->setPriceLevelField($company, $company_from_response);
     $this->updateCustomerProfiles($company, $company_from_response);
     $this->setPaymentTermsField($company, $company_from_response);
+    $this->setAvataxFields($company, $company_from_response);
+    $company->save();
   }
 
   /**
@@ -253,7 +257,6 @@ class CompanyImporter {
         $price_level = 'nonmember';
     }
     $company->set('price_level', $price_level);
-    $company->save();
   }
 
   /**
@@ -290,7 +293,19 @@ class CompanyImporter {
         $payment_terms = 'ineligible';
     }
     $company->set('payment_terms', $payment_terms);
-    $company->save();
+  }
+
+  /**
+   * Sets the Avatax fields.
+   *
+   * @param Drupal\group\Entity\Group $company
+   *   The company.
+   * @param array $company_from_response
+   *   The company from the Api response.
+   */
+  protected function setAvataxFields(Group &$company, array $company_from_response) {
+    $company->set('avatax_tax_exemption_number', $company_from_response['exemptionCertificateNumber']);
+    $company->set('avatax_customer_code', $company_from_response['nsAccountId']);
   }
 
   /**

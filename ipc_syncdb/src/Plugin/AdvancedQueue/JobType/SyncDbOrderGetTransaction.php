@@ -122,7 +122,7 @@ class SyncDbOrderGetTransaction extends JobTypeBase implements ContainerFactoryP
   public function process(Job $job) {
     $order_id = $job->getPayload()['order_id'];
     $transaction_id = $job->getPayload()['transaction_id'];
-    $status = $this->transactionManager->processUpdateForOrder($order_id, $transaction_id);
+    $status = $this->transactionManager->processUpdateForTransaction($order_id, $transaction_id);
     if ($status == 'success') {
       return JobResult::success();
     }

@@ -124,7 +124,7 @@ class ProductImporter {
     $product->set('status', $this->isProductPublished($product));
     $product->save();
     $this->updatePriceLists($variation, $product_from_response);
-    $this->displayProductImportSuccessMessage($product);
+    $this->displayProductImportSuccessMessage($product, $variation);
     return "Saved";
   }
 
@@ -150,9 +150,12 @@ class ProductImporter {
       $product_from_response['productId']
     );
     if (!$product) {
+      /** @var \Drupal\commerce_store\StoreStorageInterface $store_storage */
+      $store_storage = $this->entityTypeManager->getStorage('commerce_store');
+      $default_store = $store_storage->loadDefault();
       $product = Product::create([
         'type' => $product_type,
-        'stores' => [1],
+        'stores' => [$default_store],
       ]);
       $product->save();
       $newly_created = TRUE;
@@ -288,7 +291,6 @@ class ProductImporter {
         $release_date = substr($product_from_response['releaseDate'], 0, 10);
         $variation->set('release_date', $release_date);
         $this->setProductVariationFormatField($variation, $product_from_response);
-        $variation->set('tax_schedule', $product_from_response['taxSchedule']['nsTaxScheduleId']);
         $this->setProductVariationProductFormatField($variation, $product_from_response);
         $variation->set('dropshipped', $product_from_response['dropShipProduct']);
         $variation->set('stock_level', $product_from_response['quantityAvailable']);
@@ -296,12 +298,10 @@ class ProductImporter {
         break;
 
       case 'digital_document':
-      case 'multi_device_license':
         $this->setCoreFieldsCommonToAllVariations($variation, $product_from_response, $newly_created);
         $release_date = substr($product_from_response['releaseDate'], 0, 10);
         $variation->set('release_date', $release_date);
         $this->setProductVariationFormatField($variation, $product_from_response);
-        $variation->set('tax_schedule', $product_from_response['taxSchedule']['nsTaxScheduleId']);
         $variation->set('drm', $product_from_response['drm']);
         $this->setProductVariationProductFormatField($variation, $product_from_response);
         $this->setProductVariationItemTypeField($variation, $product_from_response);
@@ -312,10 +312,23 @@ class ProductImporter {
         $variation->save();
         break;
 
+      case 'multi_device_license':
+        $this->setCoreFieldsCommonToAllVariations($variation, $product_from_response, $newly_created);
+        $release_date = substr($product_from_response['releaseDate'], 0, 10);
+        $variation->set('release_date', $release_date);
+        $this->setProductVariationFormatField($variation, $product_from_response);
+        $variation->set('drm', $product_from_response['drm']);
+        $this->setProductVariationProductFormatField($variation, $product_from_response);
+        $this->setProductVariationItemTypeField($variation, $product_from_response);
+        if ($product_from_response['minimumQuantity']) {
+          $variation->set('minimum_order_quantity', $product_from_response['minimumQuantity']);
+        }
+        $variation->save();
+        break;
+
       case 'service':
         $this->setCoreFieldsCommonToAllVariations($variation, $product_from_response, $newly_created);
         $variation->set('minimum_order_quantity', $product_from_response['minimumQuantity']);
-        $variation->set('tax_schedule', $product_from_response['taxSchedule']['nsTaxScheduleId']);
         $variation->save();
         break;
 
@@ -755,7 +768,8 @@ class ProductImporter {
     $query = $product_storage->getQuery();
     $query
       ->condition('type', $product_type)
-      ->sort('product_id', 'DESC');
+      ->sort('product_id', 'DESC')
+      ->accessCheck(FALSE);
 
     // Service products are matched via SyncDB ID on a child variation, because
     // they do not currently have all the same matching field values set as the
@@ -985,6 +999,7 @@ class ProductImporter {
     $variation->set('netsuite_id', $product_from_response['nsProductId']);
     $variation->set('syncdb_id', $product_from_response['productId']);
     $variation->setSku($product_from_response['productNumber']);
+    $variation->set('avatax_tax_code', $product_from_response['avaTaxCode']);
     $variation->save();
   }
 
@@ -993,16 +1008,20 @@ class ProductImporter {
    *
    * @param \Drupal\commerce_product\Entity\Product $product
    *   The product.
+   * @param \Drupal\commerce_product\Entity\ProductVariation $variation
+   *   The product.
    */
-  protected function displayProductImportSuccessMessage(Product $product) {
+  protected function displayProductImportSuccessMessage(Product $product, ProductVariation $variation) {
     $account = \Drupal::currentUser();
     if ($account->hasPermission('administer ipcsync')) {
-      $this->messenger->addMessage(t('Product imported successfully: <a href=":url">:title</a>', [
+      $this->messenger->addMessage(t('Product with SyncDB ID :syncdb_id imported successfully: <a href=":url">:title</a>', [
+        ':syncdb_id' => $variation->get('syncdb_id')->value,
         ':url' => $product->toUrl()->toString(),
         ':title' => $product->getTitle(),
       ]), 'status', FALSE);
     }
-    $this->logger->notice(t('Product imported successfully: <a href=":url">:title</a>', [
+    $this->logger->notice(t('Product with SyncDB ID :syncdb_id imported successfully: <a href=":url">:title</a>', [
+      ':syncdb_id' => $variation->get('syncdb_id')->value,
       ':url' => $product->toUrl()->toString(),
       ':title' => $product->getTitle(),
     ]));
@@ -1105,7 +1124,7 @@ class ProductImporter {
   }
 
   /**
-   * Sets the product variation license_expiration, license_type fields.
+   * Sets the product variation commerce_file field and license fields.
    *
    * @param \Drupal\commerce_product\Entity\ProductVariation $variation
    *   The product variation.
@@ -1113,8 +1132,37 @@ class ProductImporter {
    *   The product from the Api response.
    */
   protected function setProductVariationLicenseFields(ProductVariation &$variation, array $product_from_response) {
+    // Construct new value for commerce_file field based on data from the API.
+    if (!empty($product_from_response['productFiles'])) {
+      $saved_files = [];
+      foreach ($product_from_response['productFiles'] as $product_file) {
+        $file_filename = $product_file['filename'];
+        $file_url = "s3://$file_filename";
+
+        // Create file if it doesn't exist in Drupal yet.
+        /** @var \Drupal\file\FileStorageInterface $file_storage */
+        $file_storage = $this->entityTypeManager->getStorage('file');
+        $files = $file_storage->loadByProperties(['filename' => $file_filename]);
+        if ($files) {
+          $file = reset($files);
+        }
+        else {
+          $file = $file_storage->create([
+            'filename' => $file_filename,
+            'uri' => $file_url,
+            'status' => FILE_STATUS_PERMANENT,
+          ]);
+          $file->save();
+        }
+        $saved_files[] = $file;
+      }
+      $variation->set('commerce_file', $saved_files);
+    }
+
     if ($product_from_response['drm'] == TRUE) {
-      $variation->set('license_expiration', ['target_plugin_id' => 'unlimited']);
+      $variation->set('license_expiration', [
+        'target_plugin_id' => 'unlimited',
+      ]);
       $variation->set('license_type', [
         'target_plugin_id' => 'commerce_file',
         'target_plugin_configuration' => [
@@ -1426,7 +1474,7 @@ class ProductImporter {
       $variation = reset($variations);
       $product_id = $variation->getProductId();
 
-      if ($product_id != $target_product->id()) {
+      if ($product_id && $product_id != $target_product->id()) {
         // Attach the variation to the right product.
         $product = $variation->getProduct();
         $product->removeVariation($variation);

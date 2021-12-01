@@ -9,10 +9,10 @@ services:
     arguments: ['@entity_type.manager', '@config.factory']
     tags:
       - { name: event_subscriber }
-  
+
   ipc_syncdb.transaction_manager:
     class: Drupal\ipc_syncdb\TransactionManager
-    arguments: ['@entity_type.manager', '@date.formatter', '@messenger', '@logger.channel.ipc_syncdb', '@config.factory', '@state', '@commerce_order.adjustment_transformer']
+    arguments: ['@entity_type.manager', '@date.formatter', '@messenger', '@logger.channel.ipc_syncdb', '@config.factory', '@state', '@commerce_order.adjustment_transformer', '@ipc_syncdb.user_importer', '@ipc_syncdb.company_importer']
 
   ipc_syncdb.product_importer:
     class: Drupal\ipc_syncdb\ProductImporter
@@ -25,3 +25,7 @@ services:
   ipc_syncdb.company_importer:
     class: Drupal\ipc_syncdb\CompanyImporter
     arguments: ['@entity_type.manager', '@messenger', '@logger.channel.ipc_syncdb', '@state', '@config.factory']
+
+  ipc_syncdb.license_importer:
+    class: Drupal\ipc_syncdb\LicenseImporter
+    arguments: ['@entity_type.manager', '@logger.channel.ipc_syncdb', '@state', '@ipc_syncdb.user_importer', '@ipc_syncdb.company_importer', '@ipc_syncdb.product_importer']

@@ -14,7 +14,7 @@ use Drupal\advancedqueue\Job;
 use Drupal\commerce_cart\CartProviderInterface;
 
 /**
- * Imports products from Sync DB via IPCTransactionApi.
+ * Imports users from Sync DB via IPCEntitiesApi.
  */
 class UserImporter {
 
@@ -103,6 +103,8 @@ class UserImporter {
    *
    * @return \Drupal\user\UserInterface|false
    *   The imported user.
+   *
+   * @throws \GuzzleHttp\Exception\GuzzleException
    */
   public function importUser($sync_db_id) {
     $requestVariables = new \stdClass();
@@ -145,6 +147,8 @@ class UserImporter {
    *
    * @return \Drupal\user\UserInterface|false
    *   The imported user.
+   *
+   * @throws \GuzzleHttp\Exception\GuzzleException
    */
   protected function importDataForUser(array $user_from_response) {
     $user = $this->createOrLoadUser($user_from_response);
@@ -217,6 +221,8 @@ class UserImporter {
    *   The user.
    * @param array $user_from_response
    *   The user from the Api response.
+   *
+   * @throws \Drupal\Core\Entity\EntityStorageException
    */
   protected function setUserFields(User &$user, array $user_from_response) {
     $user->set('syncdb_id', $user_from_response['userId']);
@@ -225,9 +231,10 @@ class UserImporter {
     if ($primary_company) {
       $user->set('primary_company', ['target_id' => $primary_company->id()]);
     }
-    $user->save();
     $this->setPriceLevelField($user, $user_from_response);
     $this->updateCustomerProfiles($user, $user_from_response);
+    $this->setAvataxFields($user, $user_from_response);
+    $user->save();
   }
 
   /**
@@ -256,7 +263,19 @@ class UserImporter {
         $price_level = '';
     }
     $user->set('price_level', $price_level);
-    $user->save();
+  }
+
+  /**
+   * Sets the Avatax fields.
+   *
+   * @param Drupal\user\Entity\User $user
+   *   The user.
+   * @param array $user_from_response
+   *   The user from the Api response.
+   */
+  protected function setAvataxFields(User &$user, array $user_from_response) {
+    $user->set('avatax_tax_exemption_number', $user_from_response['exemptionCertificateNumber']);
+    $user->set('avatax_customer_code', $user_from_response['nsUserId']);
   }
 
   /**
@@ -364,7 +383,7 @@ class UserImporter {
    */
   protected function displayUserImportSuccessMessage(User $user) {
     $account = \Drupal::currentUser();
-    if ($account->hasPermission('administer ipcsync')) {
+    if ($account->hasPermission('import ipcsync user')) {
       $this->messenger->addMessage(t('User imported successfully: <a href=":url">:username</a>', [
         ':url' => $user->toUrl()->toString(),
         ':username' => $user->getUsername(),
@@ -464,6 +483,22 @@ class UserImporter {
         }
       }
     }
+  }
+
+  /**
+   * Creates a job for IPC User Sync queue to import a specific user.
+   *
+   * @param string $user_email
+   *   The email of the user.
+   */
+  public function enqueueUserForImportByEmail(string $user_email) {
+    $queue_storage = $this->entityTypeManager->getStorage('advancedqueue_queue');
+    /** @var \Drupal\advancedqueue\Entity\QueueInterface $queue */
+    $queue = $queue_storage->load('ipc_user_sync');
+    $import_job = Job::create('syncdb_user_sync', [
+      'user_email' => $user_email,
+    ]);
+    $queue->enqueueJob($import_job);
   }
 
 }

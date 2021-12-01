@@ -61,11 +61,38 @@ class UserImportForm extends FormBase implements ContainerInjectionInterface {
    */
   public function buildForm(array $form, FormStateInterface $form_state) {
 
+    $form['select_import'] = [
+      '#type' => 'radios',
+      '#title' => $this->t('Type of Import to Run'),
+      '#options' => [
+        'by_syncdb_id' => $this->t('By SyncDB ID'),
+        'by_email' => $this->t('By User Email'),
+      ],
+      '#attributes' => [
+        'name' => 'field_select_import',
+      ],
+    ];
+
     $form['sync_db_id'] = [
-      '#type' => 'textfield',
+      '#type' => 'number',
       '#title' => $this->t('Sync DB Id'),
       '#description' => t('Enter the Sync DB Id of the user to import. Good test values: "100" for a user with associated companies, "890" for a user with populated addressList.'),
-      '#required' => TRUE,
+      '#states' => [
+        'visible' => [
+          ':input[name="field_select_import"]' => ['value' => 'by_syncdb_id'],
+        ],
+      ],
+    ];
+
+    $form['user_email'] = [
+      '#type' => 'email',
+      '#title' => $this->t('User Email'),
+      '#description' => t('Enter the email address of the user to import.'),
+      '#states' => [
+        'visible' => [
+          ':input[name="field_select_import"]' => ['value' => 'by_email'],
+        ],
+      ],
     ];
 
     $form['submit'] = [
@@ -78,10 +105,22 @@ class UserImportForm extends FormBase implements ContainerInjectionInterface {
 
   /**
    * {@inheritdoc}
+   *
+   * @throws \GuzzleHttp\Exception\GuzzleException
    */
   public function submitForm(array &$form, FormStateInterface $form_state) {
-    $sync_db_id = $form_state->getValue('sync_db_id');
-    $this->userImporter->importUser($sync_db_id);
+    $input = $form_state->getUserInput();
+    switch ($input['field_select_import']) {
+      case 'by_syncdb_id':
+        $sync_db_id = $form_state->getValue('sync_db_id');
+        $this->userImporter->importUser($sync_db_id);
+        return;
+
+      case 'by_email':
+        $user_email = $form_state->getValue('user_email');
+        $this->userImporter->importUserByEmail($user_email);
+        return;
+    }
   }
 
 }
