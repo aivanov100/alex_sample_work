@@ -1,0 +1,122 @@
+default:
+  autoload:
+    - "%paths.base%/features/bootstrap"
+  suites:
+    default:
+      failure_path: "%paths.base%/features/reports"
+      paths:
+        - "%paths.base%/features"
+      contexts:
+        - behat\features\bootstrap\FeatureContext
+        - Drupal\DrupalExtension\Context\DrupalContext
+        - Drupal\DrupalExtension\Context\MinkContext
+        - Drupal\DrupalExtension\Context\MessageContext
+        - Drupal\DrupalExtension\Context\DrushContext
+        - Drupal\DrupalExtension\Context\ConfigContext
+        - Drupal\DrupalExtension\Context\BatchContext
+        - Drupal\DrupalExtension\Context\RandomContext
+  extensions:
+    Drupal\MinkExtension:
+      # todo: Need profiles for LANDO & GITLAB to set the base_url
+      #base_url: http://ipcedtrD9.lndo.site  # Lando env
+      base_url: http://127.0.0.1:8080       # GitLab env
+      browser_name: chrome
+      files_path: "%paths.base%/features/assets"
+      ajax_timeout: 30
+      goutte: ~
+      default_session: s2
+      sessions:
+        s2:
+          selenium2:
+            browser: chrome
+            #wd_host: "http://selenium:4444/wd/hub"  # Lando env
+            wd_host: "http://127.0.0.1:4444/wd/hub"  # GitLab env
+            capabilities:
+              browserName: chrome
+              chrome:
+                switches:
+                  - "--disable-dev-shm-usage"
+                  - "--no-sandbox"
+                  #- "--start-fullscreen"
+              version: "*"
+
+    Drupal\DrupalExtension:
+      blackbox: ~
+      api_driver: 'drush'
+      drupal:
+        drupal_root: "%paths.base%/../../docroot"
+      drush:
+        #alias: '@ipc.local'      # Lando env
+        alias: '@ipc.simpletest'  # GitLab env
+        root: "%paths.base%/../../docroot"
+        binary: "%paths.base%/../../vendor/bin/drush"
+      region_map:
+        header_top: ".site-header-top"
+        header: ".site-header"
+        content: ".site-content"
+        footer: ".site-footer"
+        breadcrumb: "nav.breadcrumb"
+      text:
+        username_field: 'Email'
+        password_field: 'Password'
+        # Use selector for log_in, not display text, because the page has two "Log In" links.
+        log_in: 'edit-submit'
+        log_out: "Log Out"
+      selectors:
+        message_selector: '.messages'
+        error_message_selector: '.messages.error'
+        success_message_selector: '.messages.status'
+        warning_message_selector: '.messages.warning'
+
+#    DrevOps\BehatScreenshotExtension:
+#      dir: "%paths.base%/features/screenshots"
+#      fail: true
+#      fail_prefix: "failed_"
+#      purge: false
+
+nagios_dev:
+  extensions:
+    Drupal\MinkExtension:
+      base_url: 'https://ipcedge-dev.ipcinternal.org'
+
+nagios_stg:
+  extensions:
+    Drupal\MinkExtension:
+      base_url: 'https://ipcedge-stg.ipcinternal.org'
+
+nagios_stby:
+  extensions:
+    Drupal\MinkExtension:
+      base_url: 'https://ipcedge-stby.ipcinternal.org'
+
+nagios_prod:
+  extensions:
+    Drupal\MinkExtension:
+      base_url: 'https://education.ipc.org'
+
+nagios_ecom_prod:
+  extensions:
+    Drupal\MinkExtension:
+      base_url: 'https://shop.ipc.org'
+
+nagios_cms_prod:
+  extensions:
+    Drupal\MinkExtension:
+      base_url: 'https://www.ipc.org'
+
+dev_site:
+  extensions:
+    Drupal\MinkExtension:
+      base_url: https://ipcedge-dev.ipcinternal.org
+      sessions:
+        s2:
+          selenium2:
+            wd_host: "http://localhost:4444/wd/hub"
+    Drupal\DrupalExtension:
+      drupal:
+        drupal_root: "/home/ipc/www/ipc/docroot"
+      drush:
+        alias: '@ipc.dev'
+        root: "/home/ipc/www/ipc/docroot"
+        binary: '/home/ipc/www/ipc/vendor/drush/drush/drush'
+

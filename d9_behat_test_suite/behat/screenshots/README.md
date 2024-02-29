@@ -1,0 +1,1 @@
+# Behat Output: Screenshots

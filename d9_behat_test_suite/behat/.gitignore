@@ -1,0 +1,5 @@
+*.rej
+behat.local.yml
+local.yml
+bak.*
+bethat-ui-test.log
