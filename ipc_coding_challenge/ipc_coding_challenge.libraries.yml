@@ -1,6 +1,0 @@
-local_weather:
-  version: 1.x
-  css:
-    component:
-      css/local-weather.css: {}
-
